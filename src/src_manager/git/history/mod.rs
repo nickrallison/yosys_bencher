@@ -23,6 +23,7 @@ pub struct BranchHistory {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RevisionSelection {
+    All,
     Explicit(Vec<CommitId>),
     Since(CommitId),
 }
@@ -74,6 +75,7 @@ impl BranchHistory {
             })
         };
         match selection {
+            RevisionSelection::All => Ok(commits),
             RevisionSelection::Since(anchor) => {
                 let anchor = self.resolve_commit(&anchor.0)?;
                 Ok(commits[position(&anchor)? + 1..].to_vec())

@@ -9,5 +9,7 @@ pub enum Error {
     #[error(transparent)]
     Build(#[from] crate::src_manager::build::BuildError),
     #[error(transparent)]
+    Git(#[from] crate::src_manager::git::GitError),
+    #[error(transparent)]
     History(#[from] crate::src_manager::git::history::HistoryError),
 }

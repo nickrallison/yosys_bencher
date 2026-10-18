@@ -1,18 +1,18 @@
 #[derive(Debug, thiserror::Error)]
 pub enum BuildError {
-    #[error("invalid Yosys build cache: {0}")]
-    BuildCache(String),
-    #[error("Yosys build for {commit} failed during {stage}: {detail}; log: {log:?}")]
-    YosysBuild {
-        commit: String,
+    #[error("no CMakeLists.txt in {0:?}")]
+    MissingCMakeProject(std::path::PathBuf),
+    #[error("{stage} failed with {status}")]
+    Command {
         stage: &'static str,
-        detail: String,
-        log: std::path::PathBuf,
+        status: std::process::ExitStatus,
+    },
+    #[error("could not run {stage}: {source}")]
+    CommandIo {
+        stage: &'static str,
+        #[source]
+        source: std::io::Error,
     },
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    #[error(transparent)]
-    GitError(#[from] super::super::git::GitError),
-    #[error(transparent)]
-    Serialization(#[from] serde_json::Error),
 }
