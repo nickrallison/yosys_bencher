@@ -2,6 +2,8 @@ pub mod error;
 pub mod history;
 
 use std::{
+    ffi::OsString,
+    fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -10,12 +12,13 @@ use history::{BranchHistory, Commit, CommitId, HistoryError, RevisionSelection};
 
 pub use error::GitError;
 
-/// Manages revisions in an existing local Git worktree.
+/// Manages a local Git worktree and its revisions.
 #[derive(Debug, Clone)]
 pub struct GitManager {
     directory: PathBuf,
     branch: String,
     active_commit: Option<CommitId>,
+    remote: Option<OsString>,
 }
 
 impl GitManager {
@@ -29,7 +32,14 @@ impl GitManager {
             directory: directory.into(),
             branch: branch.into(),
             active_commit,
+            remote: None,
         }
+    }
+
+    /// Clone this remote during `initialize` if the worktree is missing.
+    pub fn with_remote(mut self, remote: impl Into<OsString>) -> Self {
+        self.remote = Some(remote.into());
+        self
     }
 
     pub fn directory(&self) -> &Path {
@@ -46,6 +56,31 @@ impl GitManager {
 
     /// Validate the worktree, then check out the selected commit or branch tip.
     pub fn initialize(&mut self) -> Result<CommitId, GitError> {
+        if let Some(remote) = &self.remote
+            && !self.directory.try_exists()?
+        {
+            if let Some(parent) = self.directory.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let output = Command::new("git")
+                .arg("clone")
+                .arg("--branch")
+                .arg(&self.branch)
+                .arg("--")
+                .arg(remote)
+                .arg(&self.directory)
+                .output()?;
+            if !output.status.success() {
+                return Err(GitError::Git {
+                    repository: self.directory.clone(),
+                    command: "clone".into(),
+                    status: output.status,
+                    stderr: String::from_utf8_lossy(&output.stderr).trim().into(),
+                });
+            }
+        }
         let expected = self.directory.canonicalize()?;
         let root = self.git(&["rev-parse", "--show-toplevel"])?;
         let actual = PathBuf::from(root.trim()).canonicalize()?;

@@ -13,6 +13,8 @@ pub enum BuildError {
         #[source]
         source: std::io::Error,
     },
+    #[error("invalid ccache statistics: {0}")]
+    InvalidCacheStats(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }

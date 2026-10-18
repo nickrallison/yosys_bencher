@@ -119,8 +119,7 @@ impl BranchHistory {
                 command: args.join(" "),
                 status: output.status,
                 stderr: String::from_utf8_lossy(&output.stderr).trim().into(),
-            }
-            .into());
+            });
         }
         Ok(output.stdout)
     }
