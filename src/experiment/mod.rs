@@ -1,12 +1,15 @@
 use std::{hash::Hash, path::PathBuf};
 
 use getset::Getters;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
+use crate::experiment::perf::PerfProfiler;
+use crate::src_manager::build::CcacheCMakeBuilder;
 use crate::src_manager::git::history::RevisionSelection;
 use crate::store::Store;
 
 mod error;
+mod perf;
 
 pub use error::ExperimentError;
 
@@ -20,7 +23,54 @@ pub struct Experiment<S: Suite> {
     output_dir: PathBuf,
 }
 
-impl<S: Suite> Experiment<S> {}
+impl<S: Suite> Experiment<S> {
+    pub fn run<B, D>(
+        experiment: &Experiment<S>,
+        builder: &mut CcacheCMakeBuilder,
+        store: &mut Store,
+        options: &RunOptions,
+    ) -> Result<(), ExperimentError> {
+        todo!("Stub out Experiment::run")
+    }
+}
+
+#[derive(Debug, Default, Getters)]
+pub struct RunOptions {
+    /// Collect diagnostic perf recordings after measured Yosys phases.
+    #[get]
+    perf: Option<PerfProfiler>,
+}
+
+/// Isolated workspace and process/cache helpers for one comparison attempt.
+///
+/// Use fresh temporary paths for repeated invocations and remove temporary
+/// parser inputs after use. Experiment orchestration places retained workspaces
+/// under its configured output layout, timestamp, and benchmark/commit directory.
+#[derive(Debug, Getters)]
+pub struct RunContext<'a, C> {
+    #[get]
+    workspace: PathBuf,
+    #[get]
+    artifacts: ArtifactPolicy,
+    /// Only reuse reference timings within this compatible measurement session.
+    /// `None` forces fresh reference measurements. Experiments set their own ID.
+    #[get]
+    reference_scope: Option<String>,
+    /// Optional diagnostic recordings, outside the stored timing samples.
+    #[get]
+    perf: Option<&'a PerfProfiler>,
+    #[get]
+    cache: &'a mut C,
+    #[get]
+    processes: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Getters)]
+pub struct ArtifactPolicy {
+    logs: bool,
+    scripts: bool,
+    netlists: bool,
+}
 
 #[derive(Copy, Clone, Debug, Getters)]
 pub struct Version {
@@ -76,8 +126,6 @@ pub trait Suite {
         todo!("implement cmp")
     }
 }
-
-pub struct RunContext;
 
 // A single test instance
 // need to implement Eq and Hash
