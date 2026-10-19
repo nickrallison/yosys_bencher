@@ -60,7 +60,7 @@ pub trait Benchmark: Serialize {
     // I know I want a frame like output
     type Output: BenchmarkOut;
 
-    type Suite: Suite;
+    type Suite: Suite<Benchmark = Self>;
 
     fn run(
         &self,
