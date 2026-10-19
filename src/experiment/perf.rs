@@ -10,12 +10,17 @@ use serde::Serialize;
 use crate::experiment::ExperimentError;
 
 /// Tools for diagnostic recordings, kept separate from benchmark timing samples.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Getters)]
 pub struct PerfProfiler {
+    #[get]
     perf: PathBuf,
+    #[get]
     perl: PathBuf,
+    #[get]
     addr2line: PathBuf,
+    #[get]
     stackcollapse: PathBuf,
+    #[get]
     flamegraph: PathBuf,
 }
 

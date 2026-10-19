@@ -32,12 +32,17 @@ impl CcacheStats {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Getters)]
 pub struct CcacheCMakeBuilder {
+    #[get]
     ccache_dir: PathBuf,
+    #[get]
     jobs: Option<NonZeroUsize>,
+    #[get]
     build_type: String,
+    #[get]
     configure_args: Vec<OsString>,
+    #[get]
     suppress_stdout: bool,
 }
 
@@ -52,7 +57,7 @@ impl CcacheCMakeBuilder {
         }
     }
 
-    pub fn jobs(mut self, jobs: NonZeroUsize) -> Self {
+    pub fn with_jobs(mut self, jobs: NonZeroUsize) -> Self {
         self.jobs = Some(jobs);
         self
     }
@@ -62,12 +67,12 @@ impl CcacheCMakeBuilder {
         self
     }
 
-    pub fn build_type(mut self, build_type: impl Into<String>) -> Self {
+    pub fn with_build_type(mut self, build_type: impl Into<String>) -> Self {
         self.build_type = build_type.into();
         self
     }
 
-    pub fn suppress_stdout(mut self) -> Self {
+    pub fn with_suppressed_stdout(mut self) -> Self {
         self.suppress_stdout = true;
         self
     }

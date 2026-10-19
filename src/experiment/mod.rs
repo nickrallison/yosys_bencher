@@ -67,8 +67,11 @@ pub struct RunContext<'a, C> {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Getters)]
 pub struct ArtifactPolicy {
+    #[get]
     logs: bool,
+    #[get]
     scripts: bool,
+    #[get]
     netlists: bool,
 }
 

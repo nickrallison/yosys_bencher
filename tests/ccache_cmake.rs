@@ -79,7 +79,7 @@ fn unchanged_source_hits_ccache_across_commits() -> Result<(), Box<dyn Error>> {
     let mut manager =
         GitManager::new(&source, "main", Some(first.clone())).with_remote(&repository);
     assert_eq!(manager.initialize()?, first);
-    let builder = CcacheCMakeBuilder::new(&cache).suppress_stdout();
+    let builder = CcacheCMakeBuilder::new(&cache).with_suppressed_stdout();
     builder.reset_stats()?;
 
     let first_install = builder.build(
