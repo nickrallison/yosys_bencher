@@ -13,11 +13,14 @@ use history::{BranchHistory, Commit, CommitId, HistoryError, RevisionSelection};
 pub use error::GitError;
 
 /// Manages a local Git worktree and its revisions.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Getters)]
 pub struct GitManager {
+    #[get]
     directory: PathBuf,
+    #[get]
     branch: String,
     active_commit: Option<CommitId>,
+    #[get]
     remote: Option<OsString>,
 }
 
@@ -40,14 +43,6 @@ impl GitManager {
     pub fn with_remote(mut self, remote: impl Into<OsString>) -> Self {
         self.remote = Some(remote.into());
         self
-    }
-
-    pub fn directory(&self) -> &Path {
-        &self.directory
-    }
-
-    pub fn branch(&self) -> &str {
-        &self.branch
     }
 
     pub fn active_commit(&self) -> Option<&CommitId> {
@@ -93,7 +88,7 @@ impl GitManager {
                 .revisions(&RevisionSelection::All)?
                 .last()
                 .ok_or_else(|| GitError::InvalidRevision("branch has no commits".into()))?
-                .id
+                .id()
                 .clone(),
         };
         self.set_revision(&target)
@@ -101,22 +96,19 @@ impl GitManager {
 
     /// List first-parent commits on the configured branch, oldest first.
     pub fn revisions(&self, selection: &RevisionSelection) -> Result<Vec<Commit>, GitError> {
-        BranchHistory {
-            repository: self.directory.clone(),
-            branch: self.branch.clone(),
-        }
-        .resolve(selection)
-        .map_err(|error| match error {
-            HistoryError::Git(error) => error,
-        })
+        BranchHistory::new(self.directory().clone(), self.branch().clone())
+            .resolve(selection)
+            .map_err(|error| match error {
+                HistoryError::Git(error) => error,
+            })
     }
 
     /// Resolve a revision to a full commit ID on this branch's first-parent history.
     pub fn validate_revision(&self, revision: &CommitId) -> Result<CommitId, GitError> {
         self.revisions(&RevisionSelection::Explicit(vec![revision.clone()]))?
             .pop()
-            .map(|commit| commit.id)
-            .ok_or_else(|| GitError::InvalidRevision(revision.0.clone()))
+            .map(|commit| commit.id().clone())
+            .ok_or_else(|| GitError::InvalidRevision(revision.id().clone()))
     }
 
     /// Check out a revision without carrying local changes into the build.
@@ -128,7 +120,7 @@ impl GitManager {
         {
             return Err(GitError::DirtyWorktree(self.directory.clone()));
         }
-        self.git(&["checkout", "--detach", &canonical.0])?;
+        self.git(&["checkout", "--detach", &canonical.id()])?;
         self.active_commit = Some(canonical.clone());
         self.git(&["submodule", "update", "--init", "--recursive", "--checkout"])?;
         Ok(canonical)
@@ -138,12 +130,12 @@ impl GitManager {
         let output = Command::new("git")
             .arg("--no-pager")
             .arg("-C")
-            .arg(&self.directory)
+            .arg(self.directory())
             .args(args)
             .output()?;
         if !output.status.success() {
             return Err(GitError::Git {
-                repository: self.directory.clone(),
+                repository: self.directory().clone(),
                 command: args.join(" "),
                 status: output.status,
                 stderr: String::from_utf8_lossy(&output.stderr).trim().into(),

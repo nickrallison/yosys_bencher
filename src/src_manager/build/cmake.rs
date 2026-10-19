@@ -8,14 +8,25 @@ use std::{
 
 use super::BuildError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Getters)]
 pub struct CcacheStats {
-    pub direct_hits: u64,
-    pub preprocessed_hits: u64,
-    pub misses: u64,
+    #[get = "pub"]
+    direct_hits: u64,
+    #[get = "pub"]
+    preprocessed_hits: u64,
+    #[get = "pub"]
+    misses: u64,
 }
 
 impl CcacheStats {
+    pub fn new(direct_hits: u64, preprocessed_hits: u64, misses: u64) -> Self {
+        Self {
+            direct_hits,
+            preprocessed_hits,
+            misses,
+        }
+    }
+
     pub fn hits(self) -> u64 {
         self.direct_hits + self.preprocessed_hits
     }

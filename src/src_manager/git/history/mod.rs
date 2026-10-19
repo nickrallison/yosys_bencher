@@ -12,13 +12,30 @@ use super::GitError;
 mod error;
 pub use error::HistoryError;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CommitId(pub String);
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Getters)]
+pub struct CommitId {
+    #[get = "pub"]
+    id: String,
+}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl CommitId {
+    pub fn new(id: String) -> Self {
+        Self { id }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Getters)]
 pub struct BranchHistory {
-    pub repository: PathBuf,
-    pub branch: String,
+    #[get]
+    repository: PathBuf,
+    #[get]
+    branch: String,
+}
+
+impl BranchHistory {
+    pub fn new(repository: PathBuf, branch: String) -> Self {
+        Self { repository, branch }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,12 +45,16 @@ pub enum RevisionSelection {
     Since(CommitId),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Getters)]
 pub struct Commit {
-    pub id: CommitId,
-    pub committed_at: SystemTime,
-    pub author: String,
-    pub commit_message: String,
+    #[get = "pub"]
+    id: CommitId,
+    #[get]
+    committed_at: SystemTime,
+    #[get]
+    author: String,
+    #[get]
+    commit_message: String,
 }
 
 impl BranchHistory {
@@ -57,39 +78,39 @@ impl BranchHistory {
             "-z",
             "--encoding=UTF-8",
             "--format=%H%x00%ct%x00%an <%ae>%x00%B",
-            &tip.0,
+            &tip.id,
             "--",
         ])?;
         let commits = parse_log(&output)?;
         let positions: HashMap<_, _> = commits
             .iter()
             .enumerate()
-            .map(|(index, commit)| (commit.id.0.as_str(), index))
+            .map(|(index, commit)| (commit.id.id.as_str(), index))
             .collect();
         let position = |id: &CommitId| -> Result<usize, GitError> {
-            positions.get(id.0.as_str()).copied().ok_or_else(|| {
+            positions.get(id.id.as_str()).copied().ok_or_else(|| {
                 GitError::InvalidRevision(format!(
                     "{} is not on the first-parent history of {}",
-                    id.0, self.branch,
+                    id.id, self.branch,
                 ))
             })
         };
         match selection {
             RevisionSelection::All => Ok(commits),
             RevisionSelection::Since(anchor) => {
-                let anchor = self.resolve_commit(&anchor.0)?;
+                let anchor = self.resolve_commit(&anchor.id)?;
                 Ok(commits[position(&anchor)? + 1..].to_vec())
             }
             RevisionSelection::Explicit(requested) => {
                 let mut seen = HashSet::new();
                 let mut selected = Vec::with_capacity(requested.len());
                 for requested in requested {
-                    let id = self.resolve_commit(&requested.0)?;
+                    let id = self.resolve_commit(&requested.id)?;
                     let index = position(&id)?;
-                    if !seen.insert(id.0.clone()) {
+                    if !seen.insert(id.id.clone()) {
                         return Err(GitError::InvalidRevision(format!(
                             "duplicate commit {}",
-                            id.0
+                            id.id
                         ))
                         .into());
                     }
@@ -133,7 +154,7 @@ fn parse_id(id: &str) -> Result<CommitId, HistoryError> {
     if !matches!(id.len(), 40 | 64) || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(GitError::InvalidGitOutput(format!("invalid object ID {id:?}")).into());
     }
-    Ok(CommitId(id.into()))
+    Ok(CommitId { id: id.into() })
 }
 
 fn parse_log(output: &[u8]) -> Result<Vec<Commit>, HistoryError> {

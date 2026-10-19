@@ -1,6 +1,6 @@
 use std::{hash::Hash, path::PathBuf};
 
-use getset::{Getters};
+use getset::Getters;
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::src_manager::git::history::RevisionSelection;
@@ -19,6 +19,8 @@ pub struct Experiment<S: Suite> {
     #[get]
     output_dir: PathBuf,
 }
+
+impl<S: Suite> Experiment<S> {}
 
 #[derive(Copy, Clone, Debug, Getters)]
 pub struct Version {
@@ -61,7 +63,7 @@ pub trait Suite {
                 // nothing
             }
             CmpSuite::Not => {
-                todo!("Confirm with user, if validated, bump major version")
+                todo!("Confirm with user, if validated, bump major version");
                 self.inc_maj_version();
             }
         }

@@ -9,8 +9,8 @@ const YOSYS_REPOSITORY: &str = "https://github.com/YosysHQ/yosys.git";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let revisions = vec![
-        CommitId("a31d95ea005b35bb894876e27627030bf8ef2c8a".into()),
-        CommitId("8802950c22d4dd32abd482f409c83396d04bd496".into()),
+        CommitId::new("a31d95ea005b35bb894876e27627030bf8ef2c8a".into()),
+        CommitId::new("8802950c22d4dd32abd482f409c83396d04bd496".into()),
     ];
     let output = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("output");
     let source_dir = output.join("yosys_source");
@@ -31,8 +31,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if git.active_commit() != Some(revision) {
             git.set_revision(revision)?;
         }
-        let build_dir = output.join("yosys_build").join(&revision.0);
-        let install_dir = output.join("yosys_install").join(&revision.0);
+        let build_dir = output.join("yosys_build").join(&revision.id());
+        let install_dir = output.join("yosys_install").join(&revision.id());
         let prefix = builder.build(&source_dir, &build_dir, &install_dir)?;
 
         let yosys = prefix.join("bin/yosys");
@@ -41,9 +41,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 io::Error::other(format!("missing installed Yosys: {}", yosys.display())).into(),
             );
         }
-        println!("Installed Yosys {} to {}", revision.0, prefix.display());
+        println!("Installed Yosys {} to {}", revision.id(), prefix.display());
         let stats = builder.cache_stats()?;
-        println!("ccache: {} hits, {} misses", stats.hits(), stats.misses);
+        println!("ccache: {} hits, {} misses", stats.hits(), stats.misses());
     }
     Ok(())
 }
