@@ -1,9 +1,10 @@
 use std::{hash::Hash, path::PathBuf};
 
-use getset::{CloneGetters, CopyGetters, Getters, MutGetters, Setters, WithSetters};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use getset::{Getters};
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::src_manager::git::history::RevisionSelection;
+use crate::store::Store;
 
 mod error;
 
@@ -27,6 +28,14 @@ pub struct Version {
     major: u32,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum CmpSuite {
+    /// a.cmp(b) = Subset -> b is a subset of a
+    Subset,
+    Eq,
+    Not,
+}
+
 /// An unordered Set of Benchmarks
 pub trait Suite {
     type Tool;
@@ -38,14 +47,31 @@ pub trait Suite {
     ) -> Result<<Self::Benchmark as Benchmark>::Input, ExperimentError>;
     fn benchmarks(&self) -> &[Self::Benchmark];
 
+    fn get_version(&self) -> &Version;
+    fn inc_maj_version(&mut self);
+    fn inc_min_version(&mut self);
+    fn check_bump_version(&mut self, store: &Store) {
+        let prev_stored_suite = todo!("Get prev stored suite from store");
+
+        match self.cmp(prev_stored_suite) {
+            CmpSuite::Subset => {
+                self.inc_min_version();
+            }
+            CmpSuite::Eq => {
+                // nothing
+            }
+            CmpSuite::Not => {
+                todo!("Confirm with user, if validated, bump major version")
+                self.inc_maj_version();
+            }
+        }
+    }
+
     fn name(&self) -> &str;
     fn version(&self) -> Version;
 
-    fn subset(&self, other: &Self) -> bool {
-        todo!("implement subset")
-    }
-    fn superset(&self, other: &Self) -> bool {
-        todo!("implement superset")
+    fn cmp(&self, other: &Self) -> CmpSuite {
+        todo!("implement cmp")
     }
 }
 
@@ -69,4 +95,10 @@ pub trait Benchmark: Serialize {
     ) -> Result<Self::Output, ExperimentError>;
 }
 
-pub trait BenchmarkOut: Serialize + DeserializeOwned {}
+pub trait BenchmarkIn: Eq + Hash {
+    // Might want to be able to filter by itemtype later
+}
+
+pub trait BenchmarkOut: Serialize + DeserializeOwned {
+    // which items are random vs deterministic
+}
