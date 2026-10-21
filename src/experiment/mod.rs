@@ -153,5 +153,30 @@ pub trait BenchmarkIn: Clone + Eq + Hash + Serialize + DeserializeOwned {
 }
 
 pub trait BenchmarkOut: Clone + Serialize + DeserializeOwned {
-    // which items are random vs deterministic
+    fn list_metrics() -> &'static [MetricDescriptor];
+
+    fn get_metric(&self, name: &str) -> Option<MetricValue>;
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub enum MetricValue {
+    Int(i64),
+    UInt(u64),
+    Float(f64),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum MetricType {
+    Int,
+    UInt,
+    Float,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Getters)]
+pub struct MetricDescriptor {
+    name: &'static str,
+    desc: &'static str,
+    kind: MetricType,
+    unit: &'static str,
+    random: bool,
 }
