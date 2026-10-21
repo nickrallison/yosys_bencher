@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    fmt::Display,
     path::PathBuf,
     process::Command,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -12,10 +13,16 @@ use super::GitError;
 mod error;
 pub use error::HistoryError;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Getters)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Getters)]
 pub struct CommitId {
     #[get = "pub"]
     id: String,
+}
+
+impl Display for CommitId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.id)
+    }
 }
 
 impl CommitId {

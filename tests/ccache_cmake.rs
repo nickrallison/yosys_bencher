@@ -47,7 +47,7 @@ fn unchanged_source_hits_ccache_across_commits() -> Result<(), Box<dyn Error>> {
             "first",
         ],
     )?;
-    let first = CommitId(
+    let first = CommitId::new(
         String::from_utf8(git(&repository, &["rev-parse", "HEAD"])?.stdout)?
             .trim()
             .into(),
@@ -70,7 +70,7 @@ fn unchanged_source_hits_ccache_across_commits() -> Result<(), Box<dyn Error>> {
             "second",
         ],
     )?;
-    let second = CommitId(
+    let second = CommitId::new(
         String::from_utf8(git(&repository, &["rev-parse", "HEAD"])?.stdout)?
             .trim()
             .into(),
@@ -91,7 +91,8 @@ fn unchanged_source_hits_ccache_across_commits() -> Result<(), Box<dyn Error>> {
     run(&mut Command::new(first_install.join("bin/dummy")))?;
     let first_stats = builder.cache_stats()?;
     assert_eq!(
-        first_stats.misses, 2,
+        *first_stats.misses(),
+        2,
         "first build should compile both files"
     );
     assert_eq!(first_stats.hits(), 0);
@@ -116,7 +117,7 @@ fn unchanged_source_hits_ccache_across_commits() -> Result<(), Box<dyn Error>> {
         "unchanged file should hit ccache"
     );
     assert_eq!(
-        second_stats.misses - first_stats.misses,
+        second_stats.misses() - first_stats.misses(),
         1,
         "changed file should miss ccache"
     );

@@ -27,7 +27,7 @@ impl<S: Suite> Experiment<S> {
     pub fn run<B, D>(
         experiment: &Experiment<S>,
         builder: &mut CcacheCMakeBuilder,
-        store: &mut Store,
+        store: &mut impl Store,
         options: &RunOptions,
     ) -> Result<(), ExperimentError> {
         todo!("Stub out Experiment::run")
@@ -47,7 +47,7 @@ pub struct RunOptions {
 /// parser inputs after use. Experiment orchestration places retained workspaces
 /// under its configured output layout, timestamp, and benchmark/commit directory.
 #[derive(Debug, Getters)]
-pub struct RunContext<'a, C> {
+pub struct RunContext {
     #[get]
     workspace: PathBuf,
     #[get]
@@ -58,14 +58,14 @@ pub struct RunContext<'a, C> {
     reference_scope: Option<String>,
     /// Optional diagnostic recordings, outside the stored timing samples.
     #[get]
-    perf: Option<&'a PerfProfiler>,
-    #[get]
-    cache: &'a mut C,
+    perf: Option<PerfProfiler>,
+    // #[get]
+    // cache: &'a mut C,
     #[get]
     processes: usize,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Getters)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Getters)]
 pub struct ArtifactPolicy {
     #[get]
     logs: bool,
@@ -75,7 +75,7 @@ pub struct ArtifactPolicy {
     netlists: bool,
 }
 
-#[derive(Copy, Clone, Debug, Getters)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Getters, Serialize, Deserialize)]
 pub struct Version {
     #[get]
     minor: u32,
@@ -83,7 +83,7 @@ pub struct Version {
     major: u32,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CmpSuite {
     /// a.cmp(b) = Subset -> b is a subset of a
     Subset,
@@ -105,7 +105,7 @@ pub trait Suite {
     fn get_version(&self) -> &Version;
     fn inc_maj_version(&mut self);
     fn inc_min_version(&mut self);
-    fn check_bump_version(&mut self, store: &Store) {
+    fn check_bump_version(&mut self, store: &impl Store) {
         let prev_stored_suite = todo!("Get prev stored suite from store");
 
         match self.cmp(prev_stored_suite) {
@@ -148,10 +148,10 @@ pub trait Benchmark: Serialize {
     ) -> Result<Self::Output, ExperimentError>;
 }
 
-pub trait BenchmarkIn: Eq + Hash + Serialize + DeserializeOwned {
+pub trait BenchmarkIn: Clone + Eq + Hash + Serialize + DeserializeOwned {
     // Might want to be able to filter by itemtype later
 }
 
-pub trait BenchmarkOut: Serialize + DeserializeOwned {
+pub trait BenchmarkOut: Clone + Serialize + DeserializeOwned {
     // which items are random vs deterministic
 }
