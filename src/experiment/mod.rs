@@ -147,6 +147,15 @@ pub trait BenchmarkIn: Clone + Eq + Hash + Serialize + DeserializeOwned {
 //   - Add function to get metric descriptor by type
 pub trait BenchmarkOut: Clone + Serialize + DeserializeOwned {
     fn list_metrics() -> Vec<MetricDescriptor>;
-    
     fn get_metric(&self, name: &str) -> Option<MetricValue>;
+}
+
+impl BenchmarkOut for () {
+    fn list_metrics() -> Vec<MetricDescriptor> {
+        Vec::new()
+    }
+
+    fn get_metric(&self, _name: &str) -> Option<MetricValue> {
+        None
+    }
 }

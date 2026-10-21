@@ -1,6 +1,6 @@
-use std::{collections::HashMap, f64, marker::PhantomData, path::PathBuf, time::Duration};
+use std::{collections::HashMap, hash::Hash, marker::PhantomData, path::PathBuf, time::Duration};
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
     experiment::{Benchmark, BenchmarkIn, BenchmarkOut, ExperimentError, RunContext},
@@ -11,7 +11,7 @@ use crate::{
 pub mod design;
 
 pub trait YosysProcedure {
-    type Input: BenchmarkIn;
+    type Config: Clone + Eq + Hash + Serialize + DeserializeOwned;
     type Measurements: BenchmarkOut;
 
     // ...
@@ -22,35 +22,38 @@ pub struct YosysBenchmark<P: YosysProcedure> {
 }
 
 impl<P: YosysProcedure> Benchmark for YosysBenchmark<P> {
-    type Input = P::Input;
+    type Input = YosysBenchmarkInput<P::Config>;
     type Output = YosysBenchmarkOutput<P::Measurements>;
 
     fn run(
         &self,
-        input: &Self::Input,
-        context: &mut RunContext,
+        _input: &Self::Input,
+        _context: &mut RunContext,
     ) -> Result<Self::Output, ExperimentError> {
         todo!()
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Getters)]
-pub struct YosysBenchmarkInput {
-    #[get]
+pub struct YosysBenchmarkInput<C = ()> {
+    #[get = "pub"]
     path: Yosys,
-    #[get]
+    #[get = "pub"]
     design: design::Design,
-    #[get]
-    commands: Vec<String>,
+    #[get = "pub"]
+    config: C,
 }
 
-impl BenchmarkIn for YosysBenchmarkInput {}
+impl<C> BenchmarkIn for YosysBenchmarkInput<C> where
+    C: Clone + Eq + Hash + Serialize + DeserializeOwned
+{
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Getters)]
-pub struct YosysBenchmarkOutput<M> {
-    #[get]
+pub struct YosysBenchmarkOutput<M = ()> {
+    #[get = "pub"]
     runtime: Duration,
-    #[get]
+    #[get = "pub"]
     measurements: M,
 }
 
@@ -61,7 +64,7 @@ impl<M> YosysBenchmarkOutput<M> {
             "Time to run the Yosys script",
             MetricType::Duration,
             "s",
-            false,
+            true,
         )
     }
 }
@@ -80,44 +83,65 @@ impl<M: BenchmarkOut> BenchmarkOut for YosysBenchmarkOutput<M> {
         }
     }
 }
-// ##############
-// Synth Specific
-// ##############
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Getters)]
+pub struct TimingConfig {
+    #[get = "pub"]
+    custom_commands: Vec<String>,
+}
 
 pub type CellLibrary = PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Getters)]
-pub struct SynthBenchmarkInput {
-    #[get]
+pub struct SynthConfig {
+    #[get = "pub"]
     cell_lib: CellLibrary,
-    #[get]
+    #[get = "pub"]
     custom_commands: Vec<String>,
-    #[get]
-    yosys_bmi: YosysBenchmarkInput,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Getters)]
 pub struct SynthMeasurements {
-    #[get]
+    #[get = "pub"]
     area: f64,
-    #[get]
+    #[get = "pub"]
     cell_count: HashMap<String, u64>,
 }
 
 impl BenchmarkOut for SynthMeasurements {
     fn list_metrics() -> Vec<MetricDescriptor> {
-        let mut metrics = vec![YosysBenchmarkOutput::<M>::runtime_descriptor()];
-        metrics.extend(M::list_metrics());
-        metrics
+        vec![
+            MetricDescriptor::new(
+                "area",
+                "Mapped synthesis area",
+                MetricType::Float,
+                "area",
+                false,
+            ),
+            MetricDescriptor::new(
+                "cell_count",
+                "Total number of cells",
+                MetricType::UInt,
+                "cells",
+                false,
+            ),
+        ]
     }
 
     fn get_metric(&self, name: &str) -> Option<MetricValue> {
         match name {
-            "runtime" => Some(MetricValue::Duration(self.runtime)),
-            _ => self.measurements.get_metric(name),
+            "area" => Some(MetricValue::Float(self.area)),
+            "cell_count" => self
+                .cell_count
+                .values()
+                .try_fold(0_u64, |total, count| total.checked_add(*count))
+                .map(MetricValue::UInt),
+            _ => None,
         }
     }
 }
 
+pub type TimingInput = YosysBenchmarkInput<TimingConfig>;
+pub type SynthInput = YosysBenchmarkInput<SynthConfig>;
 pub type TimingOutput = YosysBenchmarkOutput<()>;
 pub type SynthOutput = YosysBenchmarkOutput<SynthMeasurements>;
