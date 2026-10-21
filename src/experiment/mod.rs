@@ -3,13 +3,13 @@ use std::{hash::Hash, path::PathBuf};
 use getset::Getters;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::experiment::perf::PerfProfiler;
+use crate::metrics::{MetricDescriptor, MetricValue};
 use crate::src_manager::build::CcacheCMakeBuilder;
 use crate::src_manager::git::history::RevisionSelection;
 use crate::store::Store;
+use crate::tools::perf::PerfProfiler;
 
 mod error;
-mod perf;
 
 pub use error::ExperimentError;
 
@@ -28,41 +28,31 @@ impl<S: Suite> Experiment<S> {
         experiment: &Experiment<S>,
         builder: &mut CcacheCMakeBuilder,
         store: &mut impl Store,
-        options: &RunOptions,
+        options: &RunContext,
     ) -> Result<(), ExperimentError> {
         todo!("Stub out Experiment::run")
     }
 }
 
-#[derive(Debug, Default, Getters)]
-pub struct RunOptions {
-    /// Collect diagnostic perf recordings after measured Yosys phases.
-    #[get]
-    perf: Option<PerfProfiler>,
-}
+// #[derive(Debug, Default, Getters)]
+// pub struct RunOptions {
+//     /// Collect diagnostic perf recordings after measured Yosys phases.
+//     #[get]
+//     perf: Option<PerfProfiler>,
+// }
 
-/// Isolated workspace and process/cache helpers for one comparison attempt.
-///
-/// Use fresh temporary paths for repeated invocations and remove temporary
-/// parser inputs after use. Experiment orchestration places retained workspaces
-/// under its configured output layout, timestamp, and benchmark/commit directory.
 #[derive(Debug, Getters)]
 pub struct RunContext {
     #[get]
     workspace: PathBuf,
     #[get]
     artifacts: ArtifactPolicy,
-    /// Only reuse reference timings within this compatible measurement session.
-    /// `None` forces fresh reference measurements. Experiments set their own ID.
-    #[get]
-    reference_scope: Option<String>,
-    /// Optional diagnostic recordings, outside the stored timing samples.
     #[get]
     perf: Option<PerfProfiler>,
     // #[get]
     // cache: &'a mut C,
-    #[get]
-    processes: usize,
+    // #[get]
+    // processes: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Getters)]
@@ -132,14 +122,14 @@ pub trait Suite {
 
 // A single test instance
 // need to implement Eq and Hash
-pub trait Benchmark: Serialize {
+pub trait Benchmark {
     // Add traits to input, like a custom EQ for versioning
     type Input: BenchmarkIn;
     // are there any constraints on the output?
     // I know I want a frame like output
     type Output: BenchmarkOut;
 
-    type Suite: Suite<Benchmark = Self>;
+    // type Suite: Suite<Benchmark = Self>;
 
     fn run(
         &self,
@@ -156,27 +146,4 @@ pub trait BenchmarkOut: Clone + Serialize + DeserializeOwned {
     fn list_metrics() -> &'static [MetricDescriptor];
 
     fn get_metric(&self, name: &str) -> Option<MetricValue>;
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum MetricValue {
-    Int(i64),
-    UInt(u64),
-    Float(f64),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum MetricType {
-    Int,
-    UInt,
-    Float,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Getters)]
-pub struct MetricDescriptor {
-    name: &'static str,
-    desc: &'static str,
-    kind: MetricType,
-    unit: &'static str,
-    random: bool,
 }
