@@ -31,8 +31,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if git.active_commit() != Some(revision) {
             git.set_revision(revision)?;
         }
-        let build_dir = output.join("yosys_build").join(&revision.id());
-        let install_dir = output.join("yosys_install").join(&revision.id());
+        let build_dir = output.join("yosys_build").join(revision.id());
+        let install_dir = output.join("yosys_install").join(revision.id());
         let prefix = builder.build(&source_dir, &build_dir, &install_dir)?;
 
         let yosys = prefix.join("bin/yosys");

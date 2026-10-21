@@ -1,12 +1,7 @@
 pub mod error;
 pub mod history;
 
-use std::{
-    ffi::OsString,
-    fs,
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::{ffi::OsString, fs, path::PathBuf, process::Command};
 
 use history::{BranchHistory, Commit, CommitId, HistoryError, RevisionSelection};
 
@@ -120,7 +115,7 @@ impl GitManager {
         {
             return Err(GitError::DirtyWorktree(self.directory.clone()));
         }
-        self.git(&["checkout", "--detach", &canonical.id()])?;
+        self.git(&["checkout", "--detach", canonical.id()])?;
         self.active_commit = Some(canonical.clone());
         self.git(&["submodule", "update", "--init", "--recursive", "--checkout"])?;
         Ok(canonical)
