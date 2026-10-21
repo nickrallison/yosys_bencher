@@ -13,7 +13,7 @@ mod perf;
 
 pub use error::ExperimentError;
 
-#[derive(Clone, Debug, Getters)]
+#[derive(Debug, Clone, Getters)]
 pub struct Experiment<S: Suite> {
     #[get]
     revs: RevisionSelection,
@@ -75,7 +75,7 @@ pub struct ArtifactPolicy {
     netlists: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Getters, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Getters)]
 pub struct Version {
     #[get]
     minor: u32,
