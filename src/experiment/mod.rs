@@ -158,7 +158,7 @@ pub trait BenchmarkOut: Clone + Serialize + DeserializeOwned {
     fn get_metric(&self, name: &str) -> Option<MetricValue>;
 }
 
-#[derive(Debug, Clone, PartialEq, Hash)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum MetricValue {
     Int(i64),
     UInt(u64),
