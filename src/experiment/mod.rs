@@ -142,8 +142,11 @@ pub trait BenchmarkIn: Clone + Eq + Hash + Serialize + DeserializeOwned {
     // Might want to be able to filter by itemtype later
 }
 
+// TODO:
+// - Add invariant that metric descriptor type == metric value type
+//   - Add function to get metric descriptor by type
 pub trait BenchmarkOut: Clone + Serialize + DeserializeOwned {
-    fn list_metrics() -> &'static [MetricDescriptor];
-
+    fn list_metrics() -> Vec<MetricDescriptor>;
+    
     fn get_metric(&self, name: &str) -> Option<MetricValue>;
 }
