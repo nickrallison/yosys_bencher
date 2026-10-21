@@ -134,7 +134,7 @@ pub trait Suite {
 // need to implement Eq and Hash
 pub trait Benchmark: Serialize {
     // Add traits to input, like a custom EQ for versioning
-    type Input: Eq + Hash;
+    type Input: BenchmarkIn;
     // are there any constraints on the output?
     // I know I want a frame like output
     type Output: BenchmarkOut;
@@ -148,7 +148,7 @@ pub trait Benchmark: Serialize {
     ) -> Result<Self::Output, ExperimentError>;
 }
 
-pub trait BenchmarkIn: Eq + Hash {
+pub trait BenchmarkIn: Eq + Hash + Serialize + DeserializeOwned {
     // Might want to be able to filter by itemtype later
 }
 
