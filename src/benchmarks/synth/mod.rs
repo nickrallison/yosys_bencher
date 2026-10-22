@@ -1,5 +1,6 @@
 use std::{collections::HashMap, hash::Hash, marker::PhantomData, path::PathBuf, time::Duration};
 
+use contracts::contract_trait;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
@@ -69,6 +70,7 @@ impl<M> YosysBenchmarkOutput<M> {
     }
 }
 
+#[contract_trait]
 impl<M: BenchmarkOut> BenchmarkOut for YosysBenchmarkOutput<M> {
     fn list_metrics() -> Vec<MetricDescriptor> {
         let mut metrics = vec![YosysBenchmarkOutput::<M>::runtime_descriptor()];
@@ -108,6 +110,7 @@ pub struct SynthMeasurements {
     cell_count: HashMap<String, u64>,
 }
 
+#[contract_trait]
 impl BenchmarkOut for SynthMeasurements {
     fn list_metrics() -> Vec<MetricDescriptor> {
         vec![

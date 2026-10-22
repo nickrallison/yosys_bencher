@@ -1,5 +1,6 @@
 use std::{hash::Hash, path::PathBuf};
 
+use contracts::{contract_trait, debug_ensures};
 use getset::Getters;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
@@ -142,14 +143,19 @@ pub trait BenchmarkIn: Clone + Eq + Hash + Serialize + DeserializeOwned {
     // Might want to be able to filter by itemtype later
 }
 
-// TODO:
-// - Add invariant that metric descriptor type == metric value type
-//   - Add function to get metric descriptor by type
+#[contract_trait]
 pub trait BenchmarkOut: Clone + Serialize + DeserializeOwned {
     fn list_metrics() -> Vec<MetricDescriptor>;
+
+    #[debug_ensures(ret.as_ref().is_none_or(|value| {
+        Self::list_metrics().iter().any(|descriptor| {
+            *descriptor.name() == name && descriptor.matches_value(value)
+        })
+    }))]
     fn get_metric(&self, name: &str) -> Option<MetricValue>;
 }
 
+#[contract_trait]
 impl BenchmarkOut for () {
     fn list_metrics() -> Vec<MetricDescriptor> {
         Vec::new()
@@ -159,3 +165,6 @@ impl BenchmarkOut for () {
         None
     }
 }
+
+#[cfg(test)]
+mod tests;
