@@ -14,6 +14,7 @@ mod error;
 pub use error::HistoryError;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Getters)]
+#[serde(transparent)]
 pub struct CommitId {
     #[get = "pub"]
     id: String,
