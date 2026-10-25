@@ -4,6 +4,20 @@ use std::{
     path::Path,
     process::{Command, Output},
 };
+use yosys_bench::{
+    benchmarks::{
+        mcm::{CoefficientSets, McmSuite, PaperTool},
+        synth::CellLibrary,
+    },
+    experiment::{ArtifactPolicy, Experiment, RunOptions, YosysProvider},
+    src_manager::{
+        build::CcacheCMakeBuilder,
+        git::{
+            GitManager,
+            history::{CommitId, RevisionSelection},
+        },
+    },
+};
 
 fn run(command: &mut Command) -> Output {
     let output = command.output().unwrap();
@@ -41,21 +55,7 @@ fn commit(repository: &Path) -> String {
 }
 
 #[test]
-fn printed_configuration_has_no_side_effects() {
-    let root = tempfile::tempdir().unwrap();
-    let output = run(Command::new(env!("CARGO_BIN_EXE_run_mcm"))
-        .current_dir(root.path())
-        .arg("--print-config"));
-    let config: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(
-        config["revisions"]["Explicit"].as_array().unwrap().len(),
-        35
-    );
-    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
-}
-
-#[test]
-fn cli_builds_two_revisions_and_runs_composed_mcm_without_storage() {
+fn experiment_builds_two_revisions_and_runs_composed_mcm_without_storage() {
     let root = tempfile::tempdir().unwrap();
     let repository = root.path().join("original");
     fs::create_dir(&repository).unwrap();
@@ -71,22 +71,36 @@ fn cli_builds_two_revisions_and_runs_composed_mcm_without_storage() {
     fs::set_permissions(&paper, fs::Permissions::from_mode(0o755)).unwrap();
     let library = root.path().join("cells.lib");
     fs::write(&library, "library(test) {}\n").unwrap();
-    let config = root.path().join("config.json");
-    fs::write(
-        &config,
-        serde_json::to_vec(&serde_json::json!({
-            "repository": repository, "branch": "main", "revisions": {"Explicit": [first, second]},
-            "output_dir": root.path().join("output"), "paper": paper, "library": library,
-            "coefficient_sets": [[3, -11]],
-            "artifacts": {"logs":false, "scripts":false, "netlists":false}
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    let output = run(Command::new(env!("CARGO_BIN_EXE_run_mcm"))
-        .current_dir(root.path())
-        .arg(&config));
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let output_dir = root.path().join("output");
+    let suite = McmSuite::new(
+        CoefficientSets::Explicit(vec![vec![3, -11]]),
+        CellLibrary::from_path(library).unwrap(),
+        PaperTool { executable: paper },
+    );
+    let mut provider = YosysProvider {
+        git: GitManager::new(output_dir.join("source"), "main", None)
+            .with_remote(repository.as_os_str()),
+        builder: CcacheCMakeBuilder::new(output_dir.join("ccache")).with_suppressed_stdout(),
+        output_dir: output_dir.join("builds"),
+    };
+    let experiment = Experiment::new(
+        RevisionSelection::Explicit(vec![
+            CommitId::new(first.clone()),
+            CommitId::new(second.clone()),
+        ]),
+        suite,
+        output_dir,
+    );
+    let report = experiment
+        .run(
+            &mut provider,
+            &RunOptions {
+                artifacts: ArtifactPolicy::new(false, false, false),
+                perf: None,
+            },
+        )
+        .unwrap();
+    let report = serde_json::to_value(report).unwrap();
     let attempts = report["attempts"].as_array().unwrap();
     assert_eq!(attempts.len(), 2);
     assert_eq!(attempts[0]["revision"]["id"], first);
@@ -108,8 +122,7 @@ fn cli_builds_two_revisions_and_runs_composed_mcm_without_storage() {
         1
     );
     let directory = Path::new(report["directory"].as_str().unwrap());
-    assert!(directory.join("results.json").is_file());
-    assert_eq!(fs::read_dir(directory).unwrap().count(), 1);
+    assert_eq!(fs::read_dir(directory).unwrap().count(), 0);
     assert!(git(&repository, &["status", "--porcelain"]).is_empty());
     assert_eq!(git(&repository, &["rev-parse", "HEAD"]), second);
 }

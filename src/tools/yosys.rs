@@ -1,9 +1,10 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     num::NonZeroU32,
     path::{Component, Path, PathBuf},
     process::Command,
+    time::Duration,
 };
 
 use crate::experiment::{ExperimentError, ProcessOutput, RunContext, check_label};
@@ -28,11 +29,32 @@ impl Yosys {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct YosysJob {
     pub design: Design,
     pub assets: Vec<SourceFile>,
     pub commands: Vec<String>,
+    /// Labels of logs produced by `tee`, available even when artifacts are disabled.
+    pub logs: Vec<String>,
+}
+
+impl YosysJob {
+    /// Capture a stage without suppressing its output in the complete process log.
+    pub fn tee(&mut self, label: &str, commands: &[String]) -> Result<()> {
+        check_label(label)?;
+        if commands.is_empty() || self.logs.iter().any(|name| name == label) {
+            return Err(ExperimentError::Config(format!(
+                "invalid or duplicate log stage {label}"
+            )));
+        }
+        for (index, command) in commands.iter().enumerate() {
+            let mode = if index == 0 { "-o" } else { "-a" };
+            self.commands
+                .push(format!("tee {mode} .yosys-logs/{label}.log {command}"));
+        }
+        self.logs.push(label.into());
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -41,6 +63,7 @@ pub struct PreparedYosysJob {
     script: String,
     files: Vec<PathBuf>,
     includes: Vec<(PathBuf, PathBuf)>,
+    logs: Vec<String>,
 }
 
 pub struct YosysRunner {
@@ -69,7 +92,10 @@ impl YosysRunner {
             .chain(&job.assets)
         {
             let path = relative_path(&file.path, false)?;
-            if path.starts_with(".yosys-includes") || !seen.insert(path.clone()) {
+            if path.starts_with(".yosys-includes")
+                || path.starts_with(".yosys-logs")
+                || !seen.insert(path.clone())
+            {
                 return Err(ExperimentError::Config(format!(
                     "conflicting job path {}",
                     path.display()
@@ -83,10 +109,11 @@ impl YosysRunner {
         let mut includes = Vec::new();
         for (index, path) in job.design.options.include_dirs.iter().enumerate() {
             let path = relative_path(path, true)?;
-            if path.starts_with(".yosys-includes") {
-                return Err(ExperimentError::Config(
-                    "reserved include path .yosys-includes".into(),
-                ));
+            if path.starts_with(".yosys-includes") || path.starts_with(".yosys-logs") {
+                return Err(ExperimentError::Config(format!(
+                    "reserved include path {}",
+                    path.display()
+                )));
             }
             fs::create_dir_all(directory.path().join(&path))?;
             let alias = PathBuf::from(format!(".yosys-includes/{index}"));
@@ -94,6 +121,10 @@ impl YosysRunner {
             includes.push((alias, target));
         }
         stage_includes(directory.path(), &includes)?;
+        for label in &job.logs {
+            check_label(label)?;
+        }
+        fs::create_dir(directory.path().join(".yosys-logs"))?;
         let mut commands = frontend_commands(&job.design)?;
         commands.extend(job.commands.iter().cloned());
         let script = format!("{}\n", commands.join("\n"));
@@ -104,6 +135,7 @@ impl YosysRunner {
             script,
             files,
             includes,
+            logs: job.logs.clone(),
         };
         if *context.artifacts().scripts() {
             let destination = prepared.retained_scripts(context.workspace());
@@ -118,7 +150,78 @@ impl YosysRunner {
         label: &str,
         context: &mut RunContext,
     ) -> Result<ProcessOutput> {
-        context.run_process(label, &mut self.command(job.directory.path(), "run.ys"))
+        self.run(job, "run.ys", label, false, context)
+    }
+
+    /// Yosys reports per-pass self CPU time, distinct from process wall time.
+    pub fn measure_with_timings(
+        &self,
+        job: &PreparedYosysJob,
+        label: &str,
+        context: &mut RunContext,
+    ) -> Result<(ProcessOutput, HashMap<String, Duration>)> {
+        #[derive(serde::Deserialize)]
+        struct Timing {
+            runtime_ns: u64,
+        }
+        #[derive(serde::Deserialize)]
+        struct Report {
+            passes: HashMap<String, Timing>,
+        }
+
+        let output = self.run(job, "run.ys", label, true, context)?;
+        let report: Report = serde_json::from_slice(&fs::read(
+            job.directory.path().join(".yosys-logs/timing.json"),
+        )?)
+        .map_err(|error| ExperimentError::Parse(format!("invalid Yosys pass timings: {error}")))?;
+        Ok((
+            output,
+            report
+                .passes
+                .into_iter()
+                .map(|(name, timing)| (name, Duration::from_nanos(timing.runtime_ns)))
+                .collect(),
+        ))
+    }
+
+    fn run(
+        &self,
+        job: &PreparedYosysJob,
+        script: &str,
+        label: &str,
+        timings: bool,
+        context: &mut RunContext,
+    ) -> Result<ProcessOutput> {
+        check_label(label)?;
+        // A failed repetition must never expose logs from an earlier execution.
+        let directory = job.directory.path().join(".yosys-logs");
+        fs::remove_dir_all(&directory)?;
+        fs::create_dir(&directory)?;
+        let result = context.run_process(
+            label,
+            &mut self.command(job.directory.path(), script, timings),
+        );
+        let retained = (|| -> Result<()> {
+            if *context.artifacts().logs() {
+                for entry in fs::read_dir(&directory)? {
+                    let entry = entry?;
+                    let destination = context.workspace().join("logs").join(label);
+                    fs::create_dir_all(&destination)?;
+                    fs::copy(entry.path(), destination.join(entry.file_name()))?;
+                }
+            }
+            Ok(())
+        })();
+        let output = result?;
+        retained?;
+        for stage in &job.logs {
+            if !directory.join(format!("{stage}.log")).is_file() {
+                return Err(ExperimentError::Parse(format!(
+                    "missing Yosys stage log {stage}"
+                )));
+            }
+        }
+        Ok(output)
     }
 
     /// Additional invocations only. Call after all measured phases in a comparison.
@@ -153,9 +256,12 @@ impl YosysRunner {
                     script,
                 )?;
             }
-            context.run_process(
+            self.run(
+                job,
+                "inspect.ys",
                 &format!("inspect-{label}"),
-                &mut self.command(job.directory.path(), "inspect.ys"),
+                false,
+                context,
             )?;
             if !path.is_file() {
                 return Err(ExperimentError::Parse(format!(
@@ -174,7 +280,7 @@ impl YosysRunner {
                 let directory = context.workspace().join("perf").join(label);
                 job.copy_to(&directory)?;
                 perf.record(
-                    &self.command(&directory.canonicalize()?, "run.ys"),
+                    &self.command(&directory.canonicalize()?, "run.ys", false),
                     &directory,
                 )?;
             }
@@ -182,16 +288,34 @@ impl YosysRunner {
         Ok(())
     }
 
-    fn command(&self, directory: &Path, script: &str) -> Command {
+    fn command(&self, directory: &Path, script: &str, timings: bool) -> Command {
         let mut command = Command::new(&self.executable);
-        command
-            .current_dir(directory)
-            .args(["-Q", "-T", "-s", script]);
+        command.current_dir(directory).arg("-Q");
+        if timings {
+            command.args(["--perffile", ".yosys-logs/timing.json"]);
+        } else {
+            command.arg("-T");
+        }
+        command.args(["-s", script]);
         command
     }
 }
 
 impl PreparedYosysJob {
+    pub fn read_log(&self, label: &str) -> Result<String> {
+        check_label(label)?;
+        if !self.logs.iter().any(|name| name == label) {
+            return Err(ExperimentError::Config(format!(
+                "unknown Yosys log stage {label}"
+            )));
+        }
+        Ok(fs::read_to_string(
+            self.directory
+                .path()
+                .join(format!(".yosys-logs/{label}.log")),
+        )?)
+    }
+
     fn retained_scripts(&self, workspace: &Path) -> PathBuf {
         workspace.join("scripts").join(
             self.directory
@@ -210,6 +334,7 @@ impl PreparedYosysJob {
             fs::copy(self.directory.path().join(path), target)?;
         }
         stage_includes(destination, &self.includes)?;
+        fs::create_dir_all(destination.join(".yosys-logs"))?;
         Ok(())
     }
 }

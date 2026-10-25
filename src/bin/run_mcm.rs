@@ -1,16 +1,11 @@
-//! Run the V1 MCM workload collection through the composed execution layers.
-use serde::{Deserialize, Serialize};
-use std::{
-    fs,
-    num::{NonZeroU32, NonZeroUsize},
-    path::PathBuf,
-};
+//! Small default MCM workloads across the selected Yosys revisions.
+use std::{fs, path::PathBuf};
 use yosys_bench::{
     benchmarks::{
-        mcm::{CoefficientGenerator, CoefficientSets, McmOptions, McmSuite, PaperTool},
+        mcm::{CoefficientGenerator, CoefficientSets, McmSuite, PaperTool},
         synth::CellLibrary,
     },
-    experiment::{ArtifactPolicy, AttemptOutcome, Experiment, RunOptions, YosysProvider},
+    experiment::{AttemptOutcome, Experiment, RunOptions, YosysProvider},
     src_manager::{
         build::CcacheCMakeBuilder,
         git::{
@@ -18,108 +13,32 @@ use yosys_bench::{
             history::{CommitId, RevisionSelection},
         },
     },
-    tools::perf::PerfProfiler,
 };
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(default)]
-struct Config {
-    repository: String,
-    branch: String,
-    revisions: RevisionSelection,
-    output_dir: PathBuf,
-    library: PathBuf,
-    paper: PathBuf,
-    coefficient_sets: CoefficientSets,
-    input_width: u32,
-    options: McmOptions,
-    repetitions: NonZeroU32,
-    jobs: Option<NonZeroUsize>,
-    artifacts: ArtifactPolicy,
-    perf_addr2line: Option<PathBuf>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            repository: "../yosys".into(),
-            branch: "nick/mcm".into(),
-            revisions: RevisionSelection::Explicit(default_revisions()),
-            output_dir: "output/mcm".into(),
-            library: "../yosys/tests/techmap/mcm/NangateOpenCellLibrary_typical.lib".into(),
-            paper: "../yosys/tests/techmap/mcm/synth/acm".into(),
-            coefficient_sets: CoefficientSets::Generated(CoefficientGenerator::default()),
-            input_width: 32,
-            options: McmOptions::default(),
-            repetitions: NonZeroU32::new(1).unwrap(),
-            jobs: None,
-            artifacts: ArtifactPolicy::default(),
-            perf_addr2line: None,
-        }
-    }
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<_> = std::env::args_os().skip(1).collect();
-    if args.len() == 1 && args[0] == "--help" {
-        println!(
-            "Usage: run_mcm [CONFIG.json]\n       run_mcm --print-config\n\nPaths are relative to the working directory. Results are written to results.json in a fresh invocation directory."
-        );
-        return Ok(());
-    }
-    if args.len() == 1 && args[0] == "--print-config" {
-        println!("{}", serde_json::to_string_pretty(&Config::default())?);
-        return Ok(());
-    }
-    if args.len() > 1
-        || args
-            .first()
-            .is_some_and(|arg| arg.to_string_lossy().starts_with('-'))
-    {
-        return Err("expected one configuration path; use --help".into());
-    }
-    let config: Config = if let Some(path) = args.first() {
-        serde_json::from_slice(&fs::read(path)?)?
-    } else {
-        Config::default()
-    };
-    // Resolve prerequisites before cloning or building anything.
-    let perf = config
-        .perf_addr2line
-        .as_ref()
-        .map(PerfProfiler::new)
-        .transpose()?;
-    let mut suite = McmSuite::new(
-        config.coefficient_sets,
-        CellLibrary::from_path(&config.library)?,
+    let output_dir = PathBuf::from("output/mcm");
+    let suite = McmSuite::new(
+        CoefficientSets::Generated(CoefficientGenerator::default()),
+        CellLibrary::from_path("../yosys/tests/techmap/mcm/NangateOpenCellLibrary_typical.lib")?,
         PaperTool {
-            executable: config.paper,
+            executable: "../yosys/tests/techmap/mcm/synth/acm".into(),
         },
     );
-    suite.input_width = config.input_width;
-    suite.options = config.options;
-    suite.repetitions = config.repetitions;
-    let mut builder = CcacheCMakeBuilder::new(config.output_dir.join("ccache"))
+    let builder = CcacheCMakeBuilder::new(output_dir.join("ccache"))
         .configure_arg("-DYOSYS_USE_BUNDLED_LIBS=ON")
         .configure_arg("-DYOSYS_ENABLE_UNIT_TESTS=OFF")
         .with_suppressed_stdout();
-    if let Some(jobs) = config.jobs {
-        builder = builder.with_jobs(jobs);
-    }
     let mut provider = YosysProvider {
-        git: GitManager::new(config.output_dir.join("source"), config.branch, None)
-            .with_remote(config.repository),
+        git: GitManager::new(output_dir.join("source"), "nick/mcm", None).with_remote("../yosys"),
         builder,
-        output_dir: config.output_dir.join("builds"),
+        output_dir: output_dir.join("builds"),
     };
-    let experiment = Experiment::new(config.revisions, suite, config.output_dir);
-    let report = experiment.run(
-        &mut provider,
-        &RunOptions {
-            artifacts: config.artifacts,
-            perf,
-        },
-    )?;
+    let experiment = Experiment::new(
+        RevisionSelection::Explicit(default_revisions()),
+        suite,
+        output_dir,
+    );
+    let report = experiment.run(&mut provider, &RunOptions::default())?;
     let json = serde_json::to_string_pretty(&report)?;
     let path = report.directory.join("results.json");
     fs::write(&path, &json)?;
@@ -176,19 +95,4 @@ fn default_revisions() -> Vec<CommitId> {
     .into_iter()
     .map(|id| CommitId::new(id.into()))
     .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn configuration_roundtrips_and_rejects_zero_repetitions_and_jobs() {
-        let config: Config =
-            serde_json::from_str(&serde_json::to_string(&Config::default()).unwrap()).unwrap();
-        assert_eq!(config.coefficient_sets.len(), 10);
-        assert!(matches!(config.revisions, RevisionSelection::Explicit(revs) if revs.len() == 35));
-        assert!(serde_json::from_str::<Config>(r#"{"repetitions":0}"#).is_err());
-        assert!(serde_json::from_str::<Config>(r#"{"jobs":0}"#).is_err());
-    }
 }

@@ -193,6 +193,7 @@ impl YosysProcedure for InspectYosys {
             design: input.design().clone(),
             assets: Vec::new(),
             commands: vec!["stat".into()],
+            ..crate::tools::yosys::YosysJob::default()
         })
     }
 

@@ -1,25 +1,55 @@
 #!/bin/sh
+script=
+timing=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -s) script=$2; shift ;;
+        --perffile) timing=$2; shift ;;
+    esac
+    shift
+done
 has_mcm=0
 synth=0
 diagnostic=0
+log=
+emit() {
+    printf '%s\n' "$1"
+    if [ -n "$log" ]; then printf '%s\n' "$1" >> "$log"; fi
+}
 while IFS= read -r line; do
+    log=
     case "$line" in
-        mcm*) has_mcm=1 ;;
-        synth*) synth=1 ;;
+        'tee '*)
+            line=${line#tee }; mode=${line%% *}; line=${line#* }
+            log=${line%% *}; line=${line#* }
+            if [ "$mode" = '-o' ]; then : > "$log"; fi ;;
+    esac
+    case "$line" in
+        mcm*)
+            has_mcm=1
+            emit 'mcm: 2 constant multiplier(s) -> 1 adder(s), depth 2, cost 0' ;;
+        synth*) synth=1; emit 'synthesis complete' ;;
+        abc*) emit 'ABC mapping complete' ;;
+        stat*)
+            emit '=== unoptimized ==='
+            if [ "$synth" = 0 ]; then
+                emit '1 cells'; emit '1 $add'
+            else
+                area=40
+                if [ "$has_mcm" = 1 ]; then area=20; fi
+                emit '5 cells'; emit '5 NAND2_X1'
+                emit "Chip area for module 'unoptimized': $area"
+            fi ;;
         'write_verilog '*)
             diagnostic=1
             path=${line#write_verilog }; path=${path#\"}; path=${path%\"}
             printf 'module unoptimized; endmodule\n' > "$path" ;;
     esac
-done < "$4"
-phase=mcm
-area=0
-if [ "$synth" = 1 ]; then
-    phase=baseline; area=40
-    if [ "$has_mcm" = 1 ]; then phase=optimized; area=20; fi
-fi
+done < "$script"
+phase=baseline
+if [ "$has_mcm" = 1 ]; then phase=optimized; fi
 if [ "$diagnostic" = 1 ]; then phase="$phase-diagnostic"; fi
 printf '%s\n' "$phase" >> "${0%/*}/events"
-printf 'mcm: 2 constant multiplier(s) -> 1 adder(s), depth 2, cost 0\n'
-printf '=== unoptimized ===\n1 cells\n1 $add\n'
-if [ "$area" != 0 ]; then printf "Chip area for module 'unoptimized': %s\n" "$area"; fi
+if [ -n "$timing" ]; then
+    printf '{"passes":{"mcm":{"runtime_ns":2500000,"num_calls":1}}}\n' > "$timing"
+fi

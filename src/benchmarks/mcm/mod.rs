@@ -1,12 +1,10 @@
-//! Four-phase MCM comparison. Execution mechanics live in the shared runners.
+//! MCM and baseline synthesis comparison with a paper reference.
 
 use crate::{
-    benchmarks::synth::{
-        CellLibrary, SynthConfig, SynthFlow, SynthMeasurements, SynthOutput, YosysBenchmarkOutput,
-    },
+    benchmarks::synth::{CellLibrary, SynthConfig, SynthFlow, SynthMeasurements, SynthOutput},
     experiment::{BenchmarkIn, ExperimentError, Procedure, ProcedureId, RunContext, Suite, repeat},
     tools::yosys::{
-        Yosys, YosysJob, YosysRunner,
+        Yosys, YosysRunner,
         design::{Design, SourceFile},
     },
 };
@@ -20,10 +18,10 @@ mod paper;
 mod parse;
 
 pub use generate::{CoefficientGenerator, CoefficientSets};
-pub use output::{McmMeasurements, McmOutput, PaperStats};
+pub use output::{McmMeasurements, McmOutput, OptimizedMeasurements, OptimizedOutput, PaperStats};
 pub use paper::{PaperReference, PaperSession, PaperTool, PaperToolId};
 
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 1;
 type Result<T> = std::result::Result<T, ExperimentError>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -91,49 +89,43 @@ impl Procedure for McmProcedure {
             input.options.max_depth, input.options.search_budget
         );
         let runner = YosysRunner::new(&tools.yosys)?;
-        let profile = runner.prepare(
-            &YosysJob {
-                design: design.clone(),
-                assets: Vec::new(),
-                commands: vec![mcm.clone(), "stat".into()],
-            },
+        let baseline = runner.prepare(&SynthFlow::job(&design, &input.synthesis, &[])?, context)?;
+        let optimized = runner.prepare(
+            &SynthFlow::job(&design, &input.synthesis, &[mcm, "stat".into()])?,
             context,
         )?;
-        let baseline = runner.prepare(&SynthFlow::job(&design, &input.synthesis, &[])?, context)?;
-        let optimized =
-            runner.prepare(&SynthFlow::job(&design, &input.synthesis, &[mcm])?, context)?;
-        let mcm = repeat(input.repetitions, |index| {
-            let output = runner
-                .measure(&profile, &format!("mcm-{index}"), context)
+        let optimized_samples = repeat(input.repetitions, |index| {
+            let (output, timings) = runner
+                .measure_with_timings(&optimized, &format!("optimized-{index}"), context)
                 .map_err(mcm_error)?;
-            Ok(YosysBenchmarkOutput::new(
+            let cpu_time = timings
+                .get("mcm")
+                .copied()
+                .ok_or_else(|| ExperimentError::Parse("missing MCM pass timing".into()))?;
+            Ok(OptimizedOutput::new(
                 output.elapsed,
-                McmMeasurements::parse(&output, "unoptimized")?,
+                OptimizedMeasurements {
+                    mcm: McmMeasurements::parse(
+                        &optimized.read_log("before-synth")?,
+                        "unoptimized",
+                        cpu_time,
+                    )?,
+                    synthesis: SynthMeasurements::parse(&output, Some("unoptimized"))?,
+                },
             ))
         })?;
         let paper = tools.paper.reference(input, context)?;
-        let mut synth = |job, phase: &str| -> Result<Vec<SynthOutput>> {
-            repeat(input.repetitions, |index| {
-                let output = runner
-                    .measure(job, &format!("{phase}-{index}"), context)
-                    .map_err(mcm_error)?;
-                Ok(SynthOutput::new(
-                    output.elapsed,
-                    SynthMeasurements::parse(&output, Some("unoptimized"))?,
-                ))
-            })
-        };
-        let baseline_samples = synth(&baseline, "baseline")?;
-        let optimized_samples = synth(&optimized, "optimized")?;
-        for (phase, job) in [
-            ("mcm", &profile),
-            ("baseline", &baseline),
-            ("optimized", &optimized),
-        ] {
+        let baseline_samples = repeat(input.repetitions, |index| {
+            let output = runner.measure(&baseline, &format!("baseline-{index}"), context)?;
+            Ok(SynthOutput::new(
+                output.elapsed,
+                SynthMeasurements::parse(&output, Some("unoptimized"))?,
+            ))
+        })?;
+        for (phase, job) in [("baseline", &baseline), ("optimized", &optimized)] {
             runner.diagnose_repeated(job, phase, input.repetitions, context)?;
         }
         Ok(McmOutput {
-            mcm,
             paper,
             baseline: baseline_samples,
             optimized: optimized_samples,

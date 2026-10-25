@@ -9,6 +9,7 @@ fn job() -> YosysJob {
         },
         assets: Vec::new(),
         commands: vec!["stat".into()],
+        ..YosysJob::default()
     }
 }
 
@@ -64,12 +65,58 @@ fn preparation_rejects_escaping_and_conflicting_paths() {
         "run.ys",
         "rtl/top.v",
         "rtl/./top.v",
+        ".yosys-logs/stat.log",
     ] {
         let mut job = job();
         job.assets.push(SourceFile::new(path, "conflict"));
         assert!(runner.prepare(&job, &mut context).is_err(), "{path}");
         assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
     }
+}
+
+#[test]
+fn stage_logs_are_fresh_per_execution_and_failures_keep_partial_logs() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let executable = root.path().join("yosys");
+    fs::write(
+        &executable,
+        "#!/bin/sh\necho first > .yosys-logs/stage.log\n",
+    )
+    .unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+    let runner = YosysRunner::new(&Yosys::new(&executable)).unwrap();
+    let mut context = RunContext::new(
+        root.path().join("attempt"),
+        ArtifactPolicy::new(true, false, false),
+    );
+    let mut job = job();
+    job.tee("stage", &["stat".into()]).unwrap();
+    let prepared = runner.prepare(&job, &mut context).unwrap();
+    runner.measure(&prepared, "first", &mut context).unwrap();
+    assert_eq!(prepared.read_log("stage").unwrap(), "first\n");
+
+    fs::write(
+        &executable,
+        "#!/bin/sh\necho partial > .yosys-logs/stage.log\nexit 9\n",
+    )
+    .unwrap();
+    assert!(matches!(
+        runner.measure(&prepared, "failed", &mut context),
+        Err(ExperimentError::Process { .. })
+    ));
+    assert_eq!(
+        fs::read_to_string(context.workspace().join("logs/failed/stage.log")).unwrap(),
+        "partial\n"
+    );
+
+    fs::write(&executable, "#!/bin/sh\nexit 0\n").unwrap();
+    assert!(matches!(
+        runner.measure(&prepared, "missing", &mut context),
+        Err(ExperimentError::Parse(_))
+    ));
+    assert!(prepared.read_log("stage").is_err());
 }
 
 #[test]
@@ -140,6 +187,7 @@ fn real_frontend_handles_filelists_includes_defines_and_parameters() {
                 design,
                 assets: Vec::new(),
                 commands,
+                ..YosysJob::default()
             },
             &mut context,
         )

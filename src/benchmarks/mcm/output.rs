@@ -1,7 +1,7 @@
 use super::PaperReference;
 use crate::{
-    benchmarks::synth::{SynthOutput, YosysBenchmarkOutput},
-    experiment::{BenchmarkOut, ExperimentError, ProcessOutput},
+    benchmarks::synth::{SynthMeasurements, SynthOutput, YosysBenchmarkOutput},
+    experiment::{BenchmarkOut, ExperimentError},
     metrics::{MetricDescriptor, MetricType, MetricValue},
     tools::yosys::Statistics,
 };
@@ -11,14 +11,40 @@ use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McmOutput {
-    pub mcm: Vec<YosysBenchmarkOutput<McmMeasurements>>,
     pub paper: PaperReference,
+    /// Full synthesis and mapping without MCM.
     pub baseline: Vec<SynthOutput>,
-    pub optimized: Vec<SynthOutput>,
+    /// MCM statistics and mapped synthesis from the same Yosys invocation.
+    pub optimized: Vec<OptimizedOutput>,
+}
+
+pub type OptimizedOutput = YosysBenchmarkOutput<OptimizedMeasurements>;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizedMeasurements {
+    pub mcm: McmMeasurements,
+    pub synthesis: SynthMeasurements,
+}
+
+#[contract_trait]
+impl BenchmarkOut for OptimizedMeasurements {
+    fn list_metrics() -> Vec<MetricDescriptor> {
+        let mut metrics = SynthMeasurements::list_metrics();
+        metrics.extend(McmMeasurements::list_metrics());
+        metrics
+    }
+
+    fn get_metric(&self, name: &str) -> Option<MetricValue> {
+        self.synthesis
+            .get_metric(name)
+            .or_else(|| self.mcm.get_metric(name))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McmMeasurements {
+    /// Yosys pass self CPU time, excluding subprocess startup and other passes.
+    pub cpu_time: Duration,
     pub adds_subs: u64,
     pub negations: u64,
     pub multipliers: u64,
@@ -26,8 +52,7 @@ pub struct McmMeasurements {
 }
 
 impl McmMeasurements {
-    pub fn parse(output: &ProcessOutput, top: &str) -> Result<Self, ExperimentError> {
-        let text = output.stdout()?;
+    pub fn parse(text: &str, top: &str, cpu_time: Duration) -> Result<Self, ExperimentError> {
         let stats = Statistics::parse(text, Some(top))?;
         let count = |name: &str| stats.cell_count.get(name).copied().unwrap_or(0);
         let mut depth = None;
@@ -48,6 +73,7 @@ impl McmMeasurements {
             }
         }
         Ok(Self {
+            cpu_time,
             adds_subs: count("$add") + count("$sub"),
             negations: count("$neg"),
             multipliers: count("$mul"),
@@ -60,6 +86,13 @@ impl McmMeasurements {
 impl BenchmarkOut for McmMeasurements {
     fn list_metrics() -> Vec<MetricDescriptor> {
         vec![
+            MetricDescriptor::new(
+                "cpu_time",
+                "MCM pass self CPU time",
+                MetricType::Duration,
+                "s",
+                true,
+            ),
             MetricDescriptor::new(
                 "adds_subs",
                 "Add/subtract operations",
@@ -86,6 +119,7 @@ impl BenchmarkOut for McmMeasurements {
     }
     fn get_metric(&self, name: &str) -> Option<MetricValue> {
         match name {
+            "cpu_time" => Some(MetricValue::Duration(self.cpu_time)),
             "adds_subs" => Some(MetricValue::UInt(self.adds_subs)),
             "negations" => Some(MetricValue::UInt(self.negations)),
             "multipliers" => Some(MetricValue::UInt(self.multipliers)),
@@ -110,11 +144,8 @@ fn mean(values: impl Iterator<Item = f64>) -> Option<f64> {
     (count > 0).then(|| sum / count as f64)
 }
 
-fn area(samples: &[SynthOutput]) -> Option<f64> {
-    let areas: Option<Vec<_>> = samples
-        .iter()
-        .map(|sample| *sample.measurements().area())
-        .collect();
+fn area<'a>(samples: impl Iterator<Item = &'a SynthMeasurements>) -> Option<f64> {
+    let areas: Option<Vec<_>> = samples.map(|sample| *sample.area()).collect();
     mean(areas?.into_iter())
 }
 
@@ -124,8 +155,8 @@ impl BenchmarkOut for McmOutput {
     fn list_metrics() -> Vec<MetricDescriptor> {
         vec![
             MetricDescriptor::new(
-                "mcm.runtime",
-                "Mean MCM process runtime",
+                "mcm.cpu_time",
+                "Mean MCM pass self CPU time",
                 MetricType::Duration,
                 "s",
                 true,
@@ -138,10 +169,10 @@ impl BenchmarkOut for McmOutput {
                 true,
             ),
             MetricDescriptor::new(
-                "runtime_ratio",
-                "Mean MCM runtime divided by mean paper runtime",
-                MetricType::Float,
-                "ratio",
+                "optimized.runtime",
+                "Mean wall time for MCM and synthesis",
+                MetricType::Duration,
+                "s",
                 true,
             ),
             MetricDescriptor::new(
@@ -190,40 +221,55 @@ impl BenchmarkOut for McmOutput {
     }
 
     fn get_metric(&self, name: &str) -> Option<MetricValue> {
-        let runtime = || mean(self.mcm.iter().map(|s| s.runtime().as_secs_f64()));
+        let cpu_time = || {
+            mean(
+                self.optimized
+                    .iter()
+                    .map(|s| s.measurements().mcm.cpu_time.as_secs_f64()),
+            )
+        };
         let reference = || mean(self.paper.samples.iter().map(|s| s.runtime.as_secs_f64()));
         match name {
-            "mcm.runtime" => runtime().map(|v| MetricValue::Duration(Duration::from_secs_f64(v))),
+            "mcm.cpu_time" => cpu_time().map(|v| MetricValue::Duration(Duration::from_secs_f64(v))),
             "paper.runtime" => {
                 reference().map(|v| MetricValue::Duration(Duration::from_secs_f64(v)))
             }
-            "runtime_ratio" => {
-                let denominator = reference()?;
-                if denominator <= 0.0 {
-                    return None;
-                }
-                Some(MetricValue::Float(runtime()? / denominator))
+            "optimized.runtime" => mean(self.optimized.iter().map(|s| s.runtime().as_secs_f64()))
+                .map(|v| MetricValue::Duration(Duration::from_secs_f64(v))),
+            "baseline.area" => {
+                area(self.baseline.iter().map(|s| s.measurements())).map(MetricValue::Float)
             }
-            "baseline.area" => area(&self.baseline).map(MetricValue::Float),
-            "optimized.area" => area(&self.optimized).map(MetricValue::Float),
+            "optimized.area" => area(self.optimized.iter().map(|s| &s.measurements().synthesis))
+                .map(MetricValue::Float),
             "area_savings" => {
-                let baseline = area(&self.baseline)?;
+                let baseline = area(self.baseline.iter().map(|s| s.measurements()))?;
                 if baseline <= 0.0 {
                     return None;
                 }
                 Some(MetricValue::Float(
-                    100.0 * (1.0 - area(&self.optimized)? / baseline),
+                    100.0
+                        * (1.0
+                            - area(self.optimized.iter().map(|s| &s.measurements().synthesis))?
+                                / baseline),
                 ))
             }
-            "mcm.adds_subs" => mean(self.mcm.iter().map(|s| s.measurements().adds_subs as f64))
-                .map(MetricValue::Float),
-            "mcm.multipliers" => mean(self.mcm.iter().map(|s| s.measurements().multipliers as f64))
-                .map(MetricValue::Float),
+            "mcm.adds_subs" => mean(
+                self.optimized
+                    .iter()
+                    .map(|s| s.measurements().mcm.adds_subs as f64),
+            )
+            .map(MetricValue::Float),
+            "mcm.multipliers" => mean(
+                self.optimized
+                    .iter()
+                    .map(|s| s.measurements().mcm.multipliers as f64),
+            )
+            .map(MetricValue::Float),
             "mcm.depth" => {
                 let values: Option<Vec<_>> = self
-                    .mcm
+                    .optimized
                     .iter()
-                    .map(|s| s.measurements().depth.map(f64::from))
+                    .map(|s| s.measurements().mcm.depth.map(f64::from))
                     .collect();
                 mean(values?.into_iter()).map(MetricValue::Float)
             }

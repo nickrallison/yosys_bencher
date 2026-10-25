@@ -250,6 +250,7 @@ esac
                     },
                     assets: Vec::new(),
                     commands: vec!["stat".into()],
+                    ..YosysJob::default()
                 },
                 &mut context,
             )

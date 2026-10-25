@@ -128,6 +128,7 @@ impl YosysProcedure for TimingProcedure {
             design: input.design().clone(),
             assets: Vec::new(),
             commands,
+            ..YosysJob::default()
         })
     }
 
@@ -144,9 +145,16 @@ impl SynthFlow {
         config: &SynthConfig,
         before_synth: &[String],
     ) -> Result<YosysJob> {
-        let mut commands = hierarchy_commands(design)?;
-        commands.extend(before_synth.iter().cloned());
-        commands.extend(config.custom_commands.iter().cloned());
+        let mut job = YosysJob {
+            design: design.clone(),
+            assets: vec![SourceFile::new("cells.lib", config.cell_lib.liberty())],
+            commands: hierarchy_commands(design)?,
+            ..YosysJob::default()
+        };
+        if !before_synth.is_empty() {
+            job.tee("before-synth", before_synth)?;
+        }
+        job.commands.extend(config.custom_commands.iter().cloned());
         let top = design
             .top
             .as_deref()
@@ -154,16 +162,10 @@ impl SynthFlow {
             .transpose()?
             .map(|top| format!(" -top {top}"))
             .unwrap_or_default();
-        commands.extend([
-            format!("synth{top} -noabc"),
-            "abc -liberty cells.lib".into(),
-            "stat -liberty cells.lib".into(),
-        ]);
-        Ok(YosysJob {
-            design: design.clone(),
-            assets: vec![SourceFile::new("cells.lib", config.cell_lib.liberty())],
-            commands,
-        })
+        job.tee("synth", &[format!("synth{top} -noabc")])?;
+        job.tee("abc", &["abc -liberty cells.lib".into()])?;
+        job.tee("stat", &["stat -liberty cells.lib".into()])?;
+        Ok(job)
     }
 }
 

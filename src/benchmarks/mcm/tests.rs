@@ -79,28 +79,51 @@ fn comparison_preserves_samples_and_reuses_references_only_within_session() {
     let fixture = Fixture::new();
     let session = fixture.suite.begin().unwrap();
     let (first, workspace) = fixture.run(&session, no_artifacts()).unwrap();
-    assert_eq!(first.mcm.len(), 2);
     assert_eq!(first.paper.samples.len(), 2);
     assert_eq!(first.baseline.len(), 2);
     assert_eq!(first.optimized.len(), 2);
     assert_eq!(*first.baseline[0].measurements().area(), Some(40.0));
-    assert_eq!(*first.optimized[0].measurements().area(), Some(20.0));
+    assert_eq!(
+        *first.optimized[0].measurements().synthesis.area(),
+        Some(20.0)
+    );
     assert_eq!(
         first.get_metric("area_savings"),
         Some(MetricValue::Float(50.0))
     );
-    assert!(first.mcm.iter().all(|s| *s.runtime() > Duration::ZERO));
+    assert!(
+        first
+            .optimized
+            .iter()
+            .all(|s| *s.runtime() > Duration::ZERO)
+    );
+    for sample in &first.optimized {
+        assert_eq!(sample.measurements().mcm.adds_subs, 1);
+        assert_eq!(sample.measurements().mcm.multipliers, 0);
+        assert_eq!(sample.measurements().mcm.depth, Some(2));
+        assert_eq!(
+            sample.measurements().mcm.cpu_time,
+            Duration::from_micros(2500)
+        );
+        assert_eq!(
+            sample.measurements().synthesis.cell_count().get("NAND2_X1"),
+            Some(&5)
+        );
+    }
+    assert_eq!(
+        first.get_metric("mcm.cpu_time"),
+        Some(MetricValue::Duration(Duration::from_micros(2500)))
+    );
+    assert_eq!(first.get_metric("runtime_ratio"), None);
     assert_eq!(
         fixture.events(),
         [
-            "mcm",
-            "mcm",
-            "paper",
-            "paper",
-            "baseline",
-            "baseline",
             "optimized",
-            "optimized"
+            "optimized",
+            "paper",
+            "paper",
+            "baseline",
+            "baseline"
         ]
     );
     assert_eq!(fs::read_dir(workspace.path()).unwrap().count(), 0);
@@ -166,7 +189,20 @@ fn retention_and_diagnostics_do_not_add_measurement_samples() {
     let (_, logs) = fixture
         .run(&session, ArtifactPolicy::new(true, false, false))
         .unwrap();
-    assert_eq!(fs::read_dir(logs.path()).unwrap().count(), 24); // Eight commands, three logs each.
+    assert_eq!(fs::read_dir(logs.path()).unwrap().count(), 19); // Six commands, three process logs, plus stage logs.
+    for phase in ["baseline-0", "baseline-1", "optimized-0", "optimized-1"] {
+        let directory = logs.path().join("logs").join(phase);
+        for stage in ["synth", "abc", "stat"] {
+            assert!(directory.join(format!("{stage}.log")).is_file());
+        }
+        if phase.starts_with("optimized") {
+            let mcm = fs::read_to_string(directory.join("before-synth.log")).unwrap();
+            assert!(mcm.contains("depth 2"));
+            assert!(mcm.contains("1 $add"));
+            assert!(!mcm.contains("NAND2_X1"));
+            assert!(directory.join("timing.json").is_file());
+        }
+    }
     let (_, scripts) = fixture
         .run(&session, ArtifactPolicy::new(false, true, true))
         .unwrap();
@@ -174,7 +210,7 @@ fn retention_and_diagnostics_do_not_add_measurement_samples() {
         fs::read_dir(scripts.path().join("scripts"))
             .unwrap()
             .count(),
-        3
+        2
     );
     for entry in fs::read_dir(scripts.path().join("scripts")).unwrap() {
         let directory = entry.unwrap().path();
@@ -194,9 +230,9 @@ fn retention_and_diagnostics_do_not_add_measurement_samples() {
     let (output, netlists) = fixture
         .run(&session, ArtifactPolicy::new(false, false, true))
         .unwrap();
-    assert_eq!(output.mcm.len(), 2);
+    assert_eq!(output.optimized.len(), 2);
     assert_eq!(output.baseline.len(), 2);
-    for phase in ["mcm", "baseline", "optimized"] {
+    for phase in ["baseline", "optimized"] {
         assert!(
             netlists
                 .path()
@@ -207,7 +243,7 @@ fn retention_and_diagnostics_do_not_add_measurement_samples() {
     }
     let events = fixture.events();
     assert!(
-        events[events.len() - 3..]
+        events[events.len() - 2..]
             .iter()
             .all(|phase| phase.ends_with("-diagnostic"))
     );
@@ -236,7 +272,7 @@ fn failed_and_unsupported_processes_preserve_diagnostics_and_clean_scratch() {
     assert!(
         workspace
             .path()
-            .join("process-000-mcm-0.stderr.log")
+            .join("process-000-optimized-0.stderr.log")
             .is_file()
     );
     tool(
@@ -323,8 +359,14 @@ fn real_comparison_and_signed_arithmetic() {
         ArtifactPolicy::new(true, true, true),
     );
     let result = McmProcedure.run(&input, &tools, &mut context).unwrap();
-    assert!(result.optimized[0].measurements().area().is_some());
-    for phase in ["mcm", "baseline", "optimized"] {
+    assert!(
+        result.optimized[0]
+            .measurements()
+            .synthesis
+            .area()
+            .is_some()
+    );
+    for phase in ["baseline", "optimized"] {
         assert!(
             workspace
                 .path()

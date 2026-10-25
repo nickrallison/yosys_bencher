@@ -1,8 +1,8 @@
-//! Seeded workload generation matching the Python reference's random draw order.
+//! Seeded signed coefficients with heavy-tailed magnitudes.
 
 use std::ops::RangeInclusive;
 
-use rand_mt::Mt;
+use rand::{Rng, SeedableRng, rngs::SmallRng};
 use serde::{Deserialize, Serialize};
 
 use crate::experiment::ExperimentError as Error;
@@ -35,8 +35,7 @@ impl CoefficientSets {
     }
 }
 
-/// Python-compatible integer seeding, randint/choice rejection, and Pareto draws.
-/// The draw sequence matches the reference; count selects its prefix.
+/// Uniform lengths and signs with shifted Pareto magnitudes, filtered to the value range.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoefficientGenerator {
     pub seed: u64,
@@ -51,7 +50,7 @@ impl Default for CoefficientGenerator {
     fn default() -> Self {
         Self {
             seed: 42,
-            count: 10,
+            count: 3,
             length_range: 1..=6,
             value_range: -2_147_483_648..=2_147_483_647,
             a: 1.3,
@@ -74,22 +73,18 @@ impl CoefficientGenerator {
                 "invalid MCM coefficient generator settings".into(),
             ));
         }
-        let span = self.length_range.end() - self.length_range.start();
-        let span = span
-            .checked_add(1)
-            .ok_or_else(|| Error::Config("coefficient length range is too large".into()))?;
-        let mut random = PythonRandom::new(self.seed);
+        let mut random = SmallRng::seed_from_u64(self.seed);
         let mut workloads = Vec::with_capacity(self.count);
         for _ in 0..self.count {
-            let length = self.length_range.start() + random.below(span);
+            let length = random.random_range(self.length_range.clone());
             let mut coefficients = Vec::with_capacity(length as usize);
             for _ in 0..length {
                 let mut accepted = None;
                 // Bound rejection for impossible or impractically narrow ranges.
                 for _ in 0..1_000_000 {
-                    let pareto = (1.0 - random.random()).powf(-1.0 / (self.a - 1.0));
+                    let pareto = (1.0 - random.random::<f64>()).powf(-1.0 / (self.a - 1.0));
                     let magnitude = (self.scale * (pareto - 1.0)).trunc();
-                    let sign = if random.below(2) == 0 { -1 } else { 1 };
+                    let sign = if random.random_bool(0.5) { -1 } else { 1 };
                     if magnitude.is_finite() && magnitude < 9_223_372_036_854_775_808.0 {
                         let value = (magnitude as i64) * sign;
                         if self.value_range.contains(&value) {
@@ -111,53 +106,29 @@ impl CoefficientGenerator {
     }
 }
 
-// rand_mt owns MT19937; this adapter preserves CPython's integer seed encoding,
-// 53-bit random() construction, and getrandbits-based _randbelow consumption.
-struct PythonRandom(Mt);
-
-impl PythonRandom {
-    fn new(seed: u64) -> Self {
-        let mut key = vec![seed as u32];
-        if seed >> 32 != 0 {
-            key.push((seed >> 32) as u32);
-        }
-        Self(Mt::new_with_key(key))
-    }
-
-    fn random(&mut self) -> f64 {
-        let high = self.0.next_u32() >> 5;
-        let low = self.0.next_u32() >> 6;
-        (f64::from(high) * 67_108_864.0 + f64::from(low)) / 9_007_199_254_740_992.0
-    }
-
-    fn below(&mut self, bound: u32) -> u32 {
-        let bits = 32 - bound.leading_zeros();
-        loop {
-            let value = self.0.next_u32() >> (32 - bits);
-            if value < bound {
-                return value;
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn seed_42_matches_every_python_reference_coefficient() {
-        let expected: Vec<Vec<i64>> =
-            serde_json::from_str(include_str!("../../../tests/fixtures/mcm_seed42.json")).unwrap();
-        assert_eq!(
-            CoefficientGenerator {
-                count: expected.len(),
-                ..Default::default()
-            }
-            .generate()
-            .unwrap(),
-            expected
-        );
+    fn default_workloads_are_small_repeatable_and_in_range() {
+        let generator = CoefficientGenerator::default();
+        let workloads = generator.generate().unwrap();
+        eprintln!("seed {}: {workloads:?}", generator.seed);
+        assert_eq!(workloads.len(), 3);
+        assert_eq!(workloads, generator.generate().unwrap());
+        for coefficients in workloads {
+            assert!(
+                generator
+                    .length_range
+                    .contains(&(coefficients.len() as u32))
+            );
+            assert!(
+                coefficients
+                    .iter()
+                    .all(|value| generator.value_range.contains(value))
+            );
+        }
     }
 
     #[test]

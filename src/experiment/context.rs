@@ -70,6 +70,7 @@ impl RunContext {
     }
 
     /// Only spawning, execution, and output collection contribute to elapsed time.
+    /// Logs are retained here; callers handle scripts, netlists, and perf diagnostics.
     pub fn run_process(
         &mut self,
         label: &str,
