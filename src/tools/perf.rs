@@ -10,7 +10,7 @@ use serde::Serialize;
 use crate::experiment::ExperimentError;
 
 /// Tools for diagnostic recordings, kept separate from benchmark timing samples.
-#[derive(Debug, Serialize, Getters)]
+#[derive(Debug, Clone, Serialize, Getters)]
 pub struct PerfProfiler {
     #[get]
     perf: PathBuf,
@@ -181,4 +181,98 @@ fn resolve(path: &Path) -> Result<PathBuf, ExperimentError> {
         "cannot find prerequisite {}; see docs/profiling.md",
         path.display()
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        experiment::{ArtifactPolicy, RunContext},
+        tools::yosys::{
+            Yosys, YosysJob, YosysRunner,
+            design::{Design, SourceFile},
+        },
+    };
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn diagnostic_recording_keeps_artifacts_without_adding_process_samples() {
+        let root = tempfile::tempdir().unwrap();
+        let perf = root.path().join("perf");
+        fs::write(
+            &perf,
+            r#"#!/bin/sh
+case "$1" in
+record)
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+        -o) shift; printf 'raw data' > "$1" ;;
+        --) shift; "$@"; exit $? ;;
+        esac
+        shift
+    done ;;
+script) printf 'sampled stack\n' ;;
+esac
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&perf, fs::Permissions::from_mode(0o755)).unwrap();
+        let collapse = root.path().join("collapse.sh");
+        let flamegraph = root.path().join("flamegraph.sh");
+        fs::write(&collapse, "cat\n").unwrap();
+        fs::write(&flamegraph, "printf '<svg>recording</svg>'\n").unwrap();
+        let profiler = PerfProfiler {
+            perf,
+            perl: "/bin/sh".into(),
+            addr2line: "/bin/true".into(),
+            stackcollapse: collapse,
+            flamegraph,
+        };
+        let yosys = root.path().join("yosys");
+        fs::write(
+            &yosys,
+            "#!/bin/sh\ntest -f design.v || exit 3\nprintf 'called\\n' >> \"$0.calls\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&yosys, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut context = RunContext::new(
+            root.path().join("attempt"),
+            ArtifactPolicy::new(false, false, false),
+        )
+        .with_perf(profiler);
+        let runner = YosysRunner::new(&Yosys::new(yosys)).unwrap();
+        let prepared = runner
+            .prepare(
+                &YosysJob {
+                    design: Design {
+                        files: vec![SourceFile::new("design.v", "module top; endmodule")],
+                        ..Design::default()
+                    },
+                    assets: Vec::new(),
+                    commands: vec!["stat".into()],
+                },
+                &mut context,
+            )
+            .unwrap();
+        runner.measure(&prepared, "measured", &mut context).unwrap();
+        runner
+            .diagnose(&prepared, "diagnostic", &mut context)
+            .unwrap();
+        assert_eq!(*context.processes(), 1);
+        assert_eq!(
+            fs::read_to_string(root.path().join("yosys.calls"))
+                .unwrap()
+                .lines()
+                .count(),
+            2
+        );
+        let directory = context.workspace().join("perf/diagnostic");
+        assert!(directory.join("perf.data").is_file());
+        assert_eq!(
+            fs::read_to_string(directory.join("flamegraph.svg")).unwrap(),
+            "<svg>recording</svg>"
+        );
+        assert!(directory.join("design.v").is_file());
+        assert!(!context.workspace().join("scripts").exists());
+    }
 }

@@ -1,120 +1,17 @@
-use std::{collections::HashMap, hash::Hash, path::Path, time::Duration};
-
-use contracts::contract_trait;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-
-use crate::{
-    experiment::{BenchmarkIn, BenchmarkOut, ExperimentError, Procedure, ProcedureId, RunContext},
-    metrics::{MetricDescriptor, MetricType, MetricValue},
-    tools::yosys::Yosys,
+pub use crate::benchmarks::yosys::{
+    YosysBenchmark, YosysBenchmarkInput, YosysBenchmarkOutput, YosysProcedure,
 };
+pub use crate::tools::yosys::design;
+use crate::{
+    experiment::{BenchmarkIn, BenchmarkOut, ExperimentError, ProcedureId, ProcessOutput, Suite},
+    metrics::{MetricDescriptor, MetricType, MetricValue},
+    tools::yosys::{Statistics, Yosys, YosysJob, argument, design::SourceFile, hierarchy_commands},
+};
+use contracts::contract_trait;
+use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, path::Path};
 
-pub mod design;
-
-pub trait YosysProcedure {
-    type Config: Clone + Eq + Hash + Serialize + DeserializeOwned;
-    type Measurements: BenchmarkOut;
-
-    fn id(&self) -> ProcedureId;
-
-    fn run(
-        &self,
-        input: &YosysBenchmarkInput<Self::Config>,
-        yosys: &Yosys,
-        context: &mut RunContext,
-    ) -> Result<YosysBenchmarkOutput<Self::Measurements>, ExperimentError>;
-}
-
-pub struct YosysBenchmark<P: YosysProcedure> {
-    procedure: P,
-}
-
-impl<P: YosysProcedure> YosysBenchmark<P> {
-    pub fn new(procedure: P) -> Self {
-        Self { procedure }
-    }
-}
-
-impl<P: YosysProcedure> Procedure for YosysBenchmark<P> {
-    type Input = YosysBenchmarkInput<P::Config>;
-    type Tools = Yosys;
-    type Output = YosysBenchmarkOutput<P::Measurements>;
-
-    fn id(&self) -> ProcedureId {
-        self.procedure.id()
-    }
-
-    fn run(
-        &self,
-        input: &Self::Input,
-        yosys: &Self::Tools,
-        context: &mut RunContext,
-    ) -> Result<Self::Output, ExperimentError> {
-        self.procedure.run(input, yosys, context)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Getters)]
-pub struct YosysBenchmarkInput<C = ()> {
-    #[get = "pub"]
-    design: design::Design,
-    #[get = "pub"]
-    config: C,
-}
-
-impl<C> YosysBenchmarkInput<C> {
-    pub fn new(design: design::Design, config: C) -> Self {
-        Self { design, config }
-    }
-}
-
-impl<C> BenchmarkIn for YosysBenchmarkInput<C> where
-    C: Clone + Eq + Hash + Serialize + DeserializeOwned
-{
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Getters)]
-pub struct YosysBenchmarkOutput<M = ()> {
-    #[get = "pub"]
-    runtime: Duration,
-    #[get = "pub"]
-    measurements: M,
-}
-
-impl<M> YosysBenchmarkOutput<M> {
-    pub fn new(runtime: Duration, measurements: M) -> Self {
-        Self {
-            runtime,
-            measurements,
-        }
-    }
-
-    fn runtime_descriptor() -> MetricDescriptor {
-        MetricDescriptor::new(
-            "runtime",
-            "Time to run the Yosys script",
-            MetricType::Duration,
-            "s",
-            true,
-        )
-    }
-}
-
-#[contract_trait]
-impl<M: BenchmarkOut> BenchmarkOut for YosysBenchmarkOutput<M> {
-    fn list_metrics() -> Vec<MetricDescriptor> {
-        let mut metrics = vec![YosysBenchmarkOutput::<M>::runtime_descriptor()];
-        metrics.extend(M::list_metrics());
-        metrics
-    }
-
-    fn get_metric(&self, name: &str) -> Option<MetricValue> {
-        match name {
-            "runtime" => Some(MetricValue::Duration(self.runtime)),
-            _ => self.measurements.get_metric(name),
-        }
-    }
-}
+type Result<T> = std::result::Result<T, ExperimentError>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Getters)]
 pub struct TimingConfig {
@@ -167,7 +64,7 @@ impl SynthConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Getters)]
 pub struct SynthMeasurements {
     #[get = "pub"]
-    area: f64,
+    area: Option<f64>,
     #[get = "pub"]
     cell_count: HashMap<String, u64>,
 }
@@ -195,7 +92,7 @@ impl BenchmarkOut for SynthMeasurements {
 
     fn get_metric(&self, name: &str) -> Option<MetricValue> {
         match name {
-            "area" => Some(MetricValue::Float(self.area)),
+            "area" => self.area.map(MetricValue::Float),
             "cell_count" => self
                 .cell_count
                 .values()
@@ -210,3 +107,147 @@ pub type TimingInput = YosysBenchmarkInput<TimingConfig>;
 pub type SynthInput = YosysBenchmarkInput<SynthConfig>;
 pub type TimingOutput = YosysBenchmarkOutput<()>;
 pub type SynthOutput = YosysBenchmarkOutput<SynthMeasurements>;
+
+impl BenchmarkIn for TimingConfig {}
+impl BenchmarkIn for SynthConfig {}
+
+pub struct TimingProcedure;
+
+impl YosysProcedure for TimingProcedure {
+    type Config = TimingConfig;
+    type Measurements = ();
+
+    fn id(&self) -> ProcedureId {
+        ProcedureId::new("yosys.timing", 1)
+    }
+
+    fn job(&self, input: &TimingInput) -> Result<YosysJob> {
+        let mut commands = hierarchy_commands(input.design())?;
+        commands.extend(input.config().custom_commands().iter().cloned());
+        Ok(YosysJob {
+            design: input.design().clone(),
+            assets: Vec::new(),
+            commands,
+        })
+    }
+
+    fn parse(&self, _input: &TimingInput, _output: &ProcessOutput) -> Result<()> {
+        Ok(())
+    }
+}
+
+pub struct SynthFlow;
+
+impl SynthFlow {
+    pub fn job(
+        design: &design::Design,
+        config: &SynthConfig,
+        before_synth: &[String],
+    ) -> Result<YosysJob> {
+        let mut commands = hierarchy_commands(design)?;
+        commands.extend(before_synth.iter().cloned());
+        commands.extend(config.custom_commands.iter().cloned());
+        let top = design
+            .top
+            .as_deref()
+            .map(argument)
+            .transpose()?
+            .map(|top| format!(" -top {top}"))
+            .unwrap_or_default();
+        commands.extend([
+            format!("synth{top} -noabc"),
+            "abc -liberty cells.lib".into(),
+            "stat -liberty cells.lib".into(),
+        ]);
+        Ok(YosysJob {
+            design: design.clone(),
+            assets: vec![SourceFile::new("cells.lib", config.cell_lib.liberty())],
+            commands,
+        })
+    }
+}
+
+impl SynthMeasurements {
+    pub fn parse(output: &ProcessOutput, top: Option<&str>) -> Result<Self> {
+        let stats = Statistics::parse(output.stdout()?, top)?;
+        Ok(Self {
+            area: stats.area,
+            cell_count: stats.cell_count,
+        })
+    }
+}
+
+pub struct SynthProcedure;
+
+impl YosysProcedure for SynthProcedure {
+    type Config = SynthConfig;
+    type Measurements = SynthMeasurements;
+
+    fn id(&self) -> ProcedureId {
+        ProcedureId::new("yosys.synth", 1)
+    }
+    fn job(&self, input: &SynthInput) -> Result<YosysJob> {
+        SynthFlow::job(input.design(), input.config(), &[])
+    }
+    fn parse(&self, input: &SynthInput, output: &ProcessOutput) -> Result<SynthMeasurements> {
+        SynthMeasurements::parse(output, input.design().top.as_deref())
+    }
+}
+
+/// One workload per design/library pair. Inputs are regenerated each invocation.
+pub struct SynthSuite {
+    pub name: String,
+    pub designs: Vec<design::Design>,
+    pub libraries: Vec<CellLibrary>,
+    pub custom_commands: Vec<String>,
+    procedure: YosysBenchmark<SynthProcedure>,
+}
+
+impl SynthSuite {
+    pub fn new(
+        name: impl Into<String>,
+        designs: Vec<design::Design>,
+        libraries: Vec<CellLibrary>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            designs,
+            libraries,
+            custom_commands: Vec::new(),
+            procedure: YosysBenchmark::new(SynthProcedure),
+        }
+    }
+}
+
+impl Suite for SynthSuite {
+    type Tool = Yosys;
+    type Session = ();
+    type Procedure = YosysBenchmark<SynthProcedure>;
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn procedure(&self) -> &Self::Procedure {
+        &self.procedure
+    }
+    fn inputs(&self) -> Result<Vec<SynthInput>> {
+        Ok(self
+            .designs
+            .iter()
+            .flat_map(|design| {
+                self.libraries.iter().map(|library| {
+                    SynthInput::new(
+                        design.clone(),
+                        SynthConfig::new(library.clone(), self.custom_commands.clone()),
+                    )
+                })
+            })
+            .collect())
+    }
+    fn begin(&self) -> Result<()> {
+        Ok(())
+    }
+    fn tools(&self, tool: &Yosys, _session: &()) -> Result<Yosys> {
+        Ok(tool.clone())
+    }
+}

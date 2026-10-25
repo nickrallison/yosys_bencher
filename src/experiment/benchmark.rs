@@ -46,6 +46,8 @@ pub trait Procedure {
 /// Fixed dependencies must identify their contents, not just their locations.
 pub trait BenchmarkIn: Clone + Eq + Hash + Serialize + DeserializeOwned {}
 
+impl BenchmarkIn for () {}
+
 #[contract_trait]
 pub trait BenchmarkOut: Clone + Serialize + DeserializeOwned {
     fn list_metrics() -> Vec<MetricDescriptor>;

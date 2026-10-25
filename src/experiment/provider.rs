@@ -1,0 +1,52 @@
+use std::path::PathBuf;
+
+use super::ExperimentError;
+use crate::{
+    src_manager::{
+        build::CcacheCMakeBuilder,
+        git::{
+            GitManager,
+            history::{Commit, RevisionSelection},
+        },
+    },
+    tools::yosys::Yosys,
+};
+
+pub trait ToolProvider {
+    type Tool;
+
+    fn revisions(&mut self, selection: &RevisionSelection) -> Result<Vec<Commit>, ExperimentError>;
+    fn tool(&mut self, revision: &Commit) -> Result<Self::Tool, ExperimentError>;
+}
+
+pub struct YosysProvider {
+    pub git: GitManager,
+    pub builder: CcacheCMakeBuilder,
+    pub output_dir: PathBuf,
+}
+
+impl ToolProvider for YosysProvider {
+    type Tool = Yosys;
+
+    fn revisions(&mut self, selection: &RevisionSelection) -> Result<Vec<Commit>, ExperimentError> {
+        self.git.initialize()?;
+        Ok(self.git.revisions(selection)?)
+    }
+
+    fn tool(&mut self, revision: &Commit) -> Result<Yosys, ExperimentError> {
+        self.git.set_revision(revision.id())?;
+        let prefix = self.builder.build(
+            self.git.directory(),
+            &self.output_dir.join("build").join(revision.id().id()),
+            &self.output_dir.join("install").join(revision.id().id()),
+        )?;
+        let executable = prefix.join("bin/yosys");
+        if !executable.is_file() {
+            return Err(ExperimentError::Config(format!(
+                "missing installed Yosys: {}",
+                executable.display()
+            )));
+        }
+        Ok(Yosys::new(executable))
+    }
+}

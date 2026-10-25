@@ -10,7 +10,7 @@ pub use error::GitError;
 /// Manages a local Git worktree and its revisions.
 #[derive(Debug, Clone, Getters)]
 pub struct GitManager {
-    #[get]
+    #[get = "pub"]
     directory: PathBuf,
     #[get]
     branch: String,

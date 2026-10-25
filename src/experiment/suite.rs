@@ -28,14 +28,17 @@ pub enum CmpSuite {
 /// Authoring interface. Generate inputs afresh for each experiment invocation.
 pub trait Suite {
     type Tool;
+    type Session;
     type Procedure: Procedure;
 
     fn name(&self) -> &str;
     fn procedure(&self) -> &Self::Procedure;
     fn inputs(&self) -> Result<Vec<<Self::Procedure as Procedure>::Input>, ExperimentError>;
+    fn begin(&self) -> Result<Self::Session, ExperimentError>;
     fn tools(
         &self,
         tool: &Self::Tool,
+        session: &Self::Session,
     ) -> Result<<Self::Procedure as Procedure>::Tools, ExperimentError>;
 
     /// Records actual inputs for comparison and execution; never caches generation.
