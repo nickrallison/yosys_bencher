@@ -1,9 +1,5 @@
 use super::{McmInput, PaperStats, parse};
-use crate::{
-    experiment::{BenchmarkOut, ExperimentError, RunContext, repeat},
-    metrics::{MetricDescriptor, MetricValue},
-};
-use contracts::contract_trait;
+use crate::experiment::{ExperimentError, RunContext};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -43,25 +39,12 @@ pub struct PaperReference {
     pub measured_at: SystemTime,
     pub os: String,
     pub arch: String,
-    pub samples: Vec<PaperStats>,
+    pub measurements: PaperStats,
 }
 
-#[contract_trait]
-impl BenchmarkOut for PaperReference {
-    fn list_metrics() -> Vec<MetricDescriptor> {
-        vec![MetricDescriptor::samples(
-            "samples",
-            PaperStats::list_metrics(),
-        )]
-    }
-
-    fn get_metric(&self, name: &str) -> Option<MetricValue> {
-        match name {
-            "samples" => Some(MetricValue::Samples(
-                self.samples.iter().map(BenchmarkOut::metrics).collect(),
-            )),
-            _ => None,
-        }
+crate::benchmark_metrics! {
+    PaperReference {
+        group measurements(PaperStats);
     }
 }
 
@@ -72,7 +55,7 @@ struct PaperKey {
     input_width: u32,
     bit_width: u32,
     seed: u64,
-    repetitions: u32,
+    sample_index: u32,
 }
 
 /// New for each invocation; shared across that invocation's tested revisions.
@@ -127,20 +110,18 @@ impl PaperSession {
             input_width: input.input_width,
             bit_width: input.options.paper_bit_width,
             seed: input.options.paper_seed,
-            repetitions: input.repetitions.get(),
+            sample_index: *context.sample_index(),
         };
         if let Some(reference) = self.references.borrow().get(&key) {
             return Ok(reference.clone());
         }
         let measured_at = SystemTime::now();
-        let samples = repeat(input.repetitions, |index| {
-            let mut command = Command::new(&self.tool.executable);
-            command.args(["-b", &input.options.paper_bit_width.to_string()]);
-            command.args(input.coefficients.iter().map(ToString::to_string));
-            command.args(["-gc", "-seed", &input.options.paper_seed.to_string()]);
-            let output = context.run_process(&format!("paper-{index}"), &mut command)?;
-            parse::paper(output.stdout()?, output.elapsed)
-        })?;
+        let mut command = Command::new(&self.tool.executable);
+        command.args(["-b", &input.options.paper_bit_width.to_string()]);
+        command.args(input.coefficients.iter().map(ToString::to_string));
+        command.args(["-gc", "-seed", &input.options.paper_seed.to_string()]);
+        let output = context.run_process("paper", &mut command)?;
+        let measurements = parse::paper(output.stdout()?, output.elapsed)?;
         let mut references = self.references.borrow_mut();
         let reference = PaperReference {
             id: format!("{}:{}", self.scope, references.len()),
@@ -148,7 +129,7 @@ impl PaperSession {
             measured_at,
             os: std::env::consts::OS.into(),
             arch: std::env::consts::ARCH.into(),
-            samples,
+            measurements,
         };
         references.insert(key, reference.clone());
         Ok(reference)

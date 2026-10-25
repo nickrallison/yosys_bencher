@@ -1,5 +1,6 @@
 use std::{
     fs,
+    num::NonZeroU32,
     path::PathBuf,
     time::{Duration, Instant, SystemTime},
 };
@@ -18,7 +19,7 @@ mod suite;
 
 pub use benchmark::{BenchmarkIn, BenchmarkOut, Procedure, ProcedureId};
 pub(crate) use context::check_label;
-pub use context::{ArtifactPolicy, ProcessOutput, RunContext, repeat};
+pub use context::{ArtifactPolicy, ProcessOutput, RunContext};
 pub use error::ExperimentError;
 pub use provider::{ToolProvider, YosysProvider};
 pub use suite::{CmpSuite, Suite, SuiteDefinition, Version};
@@ -31,10 +32,22 @@ pub struct Experiment<S: Suite> {
     output_dir: PathBuf,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct RunOptions {
     pub artifacts: ArtifactPolicy,
     pub perf: Option<PerfProfiler>,
+    /// Independent attempts per input and revision, outside workload identity.
+    pub repetitions: NonZeroU32,
+}
+
+impl Default for RunOptions {
+    fn default() -> Self {
+        Self {
+            artifacts: ArtifactPolicy::default(),
+            perf: None,
+            repetitions: NonZeroU32::new(1).unwrap(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -48,11 +61,21 @@ pub enum AttemptOutcome<O> {
 pub struct Attempt<O> {
     pub revision: Commit,
     pub input_index: usize,
+    /// Zero-based repetition index, matched across revisions.
+    pub sample_index: u32,
+    /// Artifact and profiling errors that do not invalidate the measurement.
+    pub diagnostics: Vec<String>,
     pub started_at: SystemTime,
     /// Complete attempt time, including preparation and diagnostics.
     pub duration: Duration,
     pub artifacts: Option<PathBuf>,
     pub outcome: AttemptOutcome<O>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RevisionFailure {
+    pub revision: Commit,
+    pub reason: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -61,6 +84,7 @@ pub struct RunReport<I, O> {
     pub definition: SuiteDefinition<I>,
     pub directory: PathBuf,
     pub attempts: Vec<Attempt<O>>,
+    pub revision_failures: Vec<RevisionFailure>,
 }
 
 pub type ReportFor<S> = RunReport<
@@ -78,7 +102,7 @@ impl<S: Suite> Experiment<S> {
     }
 
     /// Generate inputs and session state afresh, then execute sequentially.
-    /// Setup/build failures stop the invocation; workload failures become outcomes.
+    /// Revision setup failures and workload failures are retained in the report.
     pub fn run(
         &self,
         provider: &mut impl ToolProvider<Tool = S::Tool>,
@@ -99,41 +123,60 @@ impl<S: Suite> Experiment<S> {
             || *options.artifacts.netlists()
             || options.perf.is_some();
         let mut attempts = Vec::new();
+        let mut revision_failures = Vec::new();
         for (revision_index, revision) in revisions.into_iter().enumerate() {
-            let tool = provider.tool(&revision)?;
-            let tools = self.suite.tools(&tool, &session)?;
-            for (input_index, input) in definition.inputs().iter().enumerate() {
-                let temporary = tempfile::Builder::new()
-                    .prefix(&format!("attempt-{revision_index:04}-{input_index:04}-"))
-                    .tempdir_in(&directory)?;
-                let workspace = temporary.path().canonicalize()?;
-                let _temporary = if retain {
-                    let _ = temporary.keep();
-                    None
-                } else {
-                    Some(temporary)
-                };
-                let mut context = RunContext::new(workspace.clone(), options.artifacts);
-                if let Some(perf) = &options.perf {
-                    context = context.with_perf(perf.clone());
+            let tools = match provider
+                .tool(&revision)
+                .and_then(|tool| self.suite.tools(&tool, &session))
+            {
+                Ok(tools) => tools,
+                Err(error) => {
+                    revision_failures.push(RevisionFailure {
+                        revision,
+                        reason: error.to_string(),
+                    });
+                    continue;
                 }
-                let started_at = SystemTime::now();
-                let start = Instant::now();
-                let outcome = match self.suite.procedure().run(input, &tools, &mut context) {
-                    Ok(output) => AttemptOutcome::Success(output),
-                    Err(ExperimentError::Unsupported(reason)) => {
-                        AttemptOutcome::Unsupported(reason)
+            };
+            for (input_index, input) in definition.inputs().iter().enumerate() {
+                for sample_index in 0..options.repetitions.get() {
+                    let temporary = tempfile::Builder::new()
+                        .prefix(&format!(
+                            "attempt-{revision_index:04}-{input_index:04}-{sample_index:04}-"
+                        ))
+                        .tempdir_in(&directory)?;
+                    let workspace = temporary.path().canonicalize()?;
+                    let _temporary = if retain {
+                        let _ = temporary.keep();
+                        None
+                    } else {
+                        Some(temporary)
+                    };
+                    let mut context = RunContext::new(workspace.clone(), options.artifacts)
+                        .with_sample_index(sample_index);
+                    if let Some(perf) = &options.perf {
+                        context = context.with_perf(perf.clone());
                     }
-                    Err(error) => AttemptOutcome::Failure(error.to_string()),
-                };
-                attempts.push(Attempt {
-                    revision: revision.clone(),
-                    input_index,
-                    started_at,
-                    duration: start.elapsed(),
-                    artifacts: retain.then_some(workspace),
-                    outcome,
-                });
+                    let started_at = SystemTime::now();
+                    let start = Instant::now();
+                    let outcome = match self.suite.procedure().run(input, &tools, &mut context) {
+                        Ok(output) => AttemptOutcome::Success(output),
+                        Err(ExperimentError::Unsupported(reason)) => {
+                            AttemptOutcome::Unsupported(reason)
+                        }
+                        Err(error) => AttemptOutcome::Failure(error.to_string()),
+                    };
+                    attempts.push(Attempt {
+                        revision: revision.clone(),
+                        input_index,
+                        sample_index,
+                        diagnostics: context.diagnostics().clone(),
+                        started_at,
+                        duration: start.elapsed(),
+                        artifacts: retain.then_some(workspace),
+                        outcome,
+                    });
+                }
             }
         }
         Ok(RunReport {
@@ -141,6 +184,7 @@ impl<S: Suite> Experiment<S> {
             definition,
             directory,
             attempts,
+            revision_failures,
         })
     }
 }

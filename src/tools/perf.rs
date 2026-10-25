@@ -249,16 +249,14 @@ esac
                         ..Design::default()
                     },
                     assets: Vec::new(),
-                    commands: vec!["stat".into()],
                     ..YosysJob::default()
                 },
                 &mut context,
             )
             .unwrap();
         runner.measure(&prepared, "measured", &mut context).unwrap();
-        runner
-            .diagnose(&prepared, "diagnostic", &mut context)
-            .unwrap();
+        runner.diagnose(&prepared, "diagnostic", &mut context);
+        assert!(context.diagnostics().is_empty());
         assert_eq!(*context.processes(), 1);
         assert_eq!(
             fs::read_to_string(root.path().join("yosys.calls"))

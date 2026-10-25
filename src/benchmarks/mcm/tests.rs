@@ -37,7 +37,6 @@ impl Fixture {
             PaperTool { executable: paper },
         );
         suite.options.search_budget = 1000;
-        suite.repetitions = NonZeroU32::new(2).unwrap();
         Self {
             root,
             suite,
@@ -50,8 +49,18 @@ impl Fixture {
         session: &Rc<PaperSession>,
         policy: ArtifactPolicy,
     ) -> Result<(McmOutput, tempfile::TempDir)> {
+        self.run_sample(session, policy, 0)
+    }
+
+    fn run_sample(
+        &self,
+        session: &Rc<PaperSession>,
+        policy: ArtifactPolicy,
+        sample_index: u32,
+    ) -> Result<(McmOutput, tempfile::TempDir)> {
         let workspace = tempfile::tempdir_in(self.root.path()).unwrap();
-        let mut context = RunContext::new(workspace.path().into(), policy);
+        let mut context =
+            RunContext::new(workspace.path().into(), policy).with_sample_index(sample_index);
         let input = self.suite.inputs()?.remove(0);
         let output = McmProcedure.run(
             &input,
@@ -75,52 +84,27 @@ fn no_artifacts() -> ArtifactPolicy {
 }
 
 #[test]
-fn comparison_preserves_samples_and_reuses_references_only_within_session() {
+fn comparison_preserves_observations_and_reuses_references_only_within_session() {
     let fixture = Fixture::new();
     let session = fixture.suite.begin().unwrap();
     let (first, workspace) = fixture.run(&session, no_artifacts()).unwrap();
-    assert_eq!(first.paper.samples.len(), 2);
-    assert_eq!(first.baseline.len(), 2);
-    assert_eq!(first.optimized.len(), 2);
-    assert_eq!(*first.baseline[0].measurements().area(), Some(40.0));
-    assert_eq!(
-        *first.optimized[0].measurements().synthesis.area(),
-        Some(20.0)
-    );
+    assert_eq!(*first.baseline.measurements().area(), Some(40.0));
+    assert_eq!(*first.optimized.measurements().synthesis.area(), Some(20.0));
     assert_eq!(
         first.get_metric("area_savings"),
         Some(MetricValue::Float(50.0))
     );
-    assert!(
-        first
-            .optimized
-            .iter()
-            .all(|s| *s.runtime() > Duration::ZERO)
-    );
-    for sample in &first.optimized {
-        assert_eq!(sample.measurements().mcm.adds_subs, 1);
-        assert_eq!(sample.measurements().mcm.multipliers, 0);
-        assert_eq!(sample.measurements().mcm.depth, Some(2));
-        assert_eq!(
-            sample.measurements().mcm.cpu_time,
-            Duration::from_micros(2500)
-        );
-        assert_eq!(
-            sample.measurements().synthesis.cell_count().get("NAND2_X1"),
-            Some(&5)
-        );
-    }
+    assert!(*first.optimized.runtime() > Duration::ZERO);
+    let measurements = first.optimized.measurements();
+    assert_eq!(measurements.mcm.adds_subs, 1);
+    assert_eq!(measurements.mcm.multipliers, 0);
+    assert_eq!(measurements.mcm.depth, Some(2));
+    assert_eq!(measurements.mcm.cpu_time, Duration::from_micros(2500));
     assert_eq!(
-        fixture.events(),
-        [
-            "optimized",
-            "optimized",
-            "paper",
-            "paper",
-            "baseline",
-            "baseline"
-        ]
+        measurements.synthesis.cell_count().get("NAND2_X1"),
+        Some(&5)
     );
+    assert_eq!(fixture.events(), ["optimized", "paper", "baseline"]);
     assert_eq!(fs::read_dir(workspace.path()).unwrap().count(), 0);
     let (second, _) = fixture.run(&session, no_artifacts()).unwrap();
     assert_eq!(first.paper.id, second.paper.id);
@@ -131,7 +115,7 @@ fn comparison_preserves_samples_and_reuses_references_only_within_session() {
             .iter()
             .filter(|phase| *phase == "paper")
             .count(),
-        2
+        1
     );
     let fresh_session = fixture.suite.begin().unwrap();
     let (fresh, _) = fixture.run(&fresh_session, no_artifacts()).unwrap();
@@ -142,7 +126,7 @@ fn comparison_preserves_samples_and_reuses_references_only_within_session() {
             .iter()
             .filter(|phase| *phase == "paper")
             .count(),
-        4
+        2
     );
     let recorded: McmOutput =
         serde_json::from_str(&serde_json::to_string(&first).unwrap()).unwrap();
@@ -150,76 +134,47 @@ fn comparison_preserves_samples_and_reuses_references_only_within_session() {
 }
 
 #[test]
-fn metric_hierarchy_preserves_individual_samples_and_optional_values() {
+fn metric_hierarchy_keeps_namespaces_and_optional_values() {
     use crate::metrics::MetricDescriptor;
-
     let fixture = Fixture::new();
     let session = fixture.suite.begin().unwrap();
     let (mut output, _) = fixture.run(&session, no_artifacts()).unwrap();
-    let mut second = output.optimized[1].measurements().clone();
-    second.mcm.cpu_time = Duration::from_millis(9);
-    second.mcm.depth = None;
-    output.optimized[1] = OptimizedOutput::new(Duration::from_millis(12), second);
-
+    let mut measurements = output.optimized.measurements().clone();
+    measurements.mcm.depth = None;
+    output.optimized = OptimizedOutput::new(Duration::from_millis(12), measurements);
     let metrics = output.metrics();
     assert!(MetricDescriptor::group("output", McmOutput::list_metrics()).matches_value(&metrics));
     let MetricValue::Group(root) = metrics else {
         panic!("expected root group")
     };
-    let MetricValue::Samples(optimized) = &root["optimized"] else {
-        panic!("expected optimized samples")
+    let MetricValue::Group(optimized) = &root["optimized"] else {
+        panic!("expected optimized group")
     };
-    assert_eq!(optimized.len(), 2);
-    for (index, sample) in optimized.iter().enumerate() {
-        let MetricValue::Group(sample) = sample else {
-            panic!("expected sample group")
-        };
-        let MetricValue::Group(measurements) = &sample["measurements"] else {
-            panic!("expected measurements group")
-        };
-        let MetricValue::Group(mcm) = &measurements["mcm"] else {
-            panic!("expected MCM group")
-        };
-        let MetricValue::Group(synthesis) = &measurements["synthesis"] else {
-            panic!("expected synthesis group")
-        };
-        assert_eq!(synthesis["area"], MetricValue::Float(20.0));
-        assert!(!measurements.contains_key("area"));
-        if index == 0 {
-            assert_eq!(
-                mcm["cpu_time"],
-                MetricValue::Duration(Duration::from_micros(2500))
-            );
-            assert_eq!(mcm["depth"], MetricValue::UInt(2));
-        } else {
-            assert_eq!(
-                mcm["cpu_time"],
-                MetricValue::Duration(Duration::from_millis(9))
-            );
-            assert!(!mcm.contains_key("depth"));
-            assert_eq!(
-                sample["runtime"],
-                MetricValue::Duration(Duration::from_millis(12))
-            );
-        }
-    }
-    let MetricValue::Group(paper) = &root["paper"] else {
-        panic!("expected paper group")
+    let MetricValue::Group(measurements) = &optimized["measurements"] else {
+        panic!("expected measurements group")
     };
-    let MetricValue::Samples(samples) = &paper["samples"] else {
-        panic!("expected paper samples")
+    let MetricValue::Group(mcm) = &measurements["mcm"] else {
+        panic!("expected MCM group")
     };
-    assert_eq!(samples.len(), 2);
-    let MetricValue::Samples(baseline) = &root["baseline"] else {
-        panic!("expected baseline samples")
+    let MetricValue::Group(synthesis) = &measurements["synthesis"] else {
+        panic!("expected synthesis group")
     };
-    assert_eq!(baseline.len(), 2);
+    assert!(!mcm.contains_key("depth"));
+    assert_eq!(
+        mcm["cpu_time"],
+        MetricValue::Duration(Duration::from_micros(2500))
+    );
+    assert_eq!(synthesis["area"], MetricValue::Float(20.0));
+    assert_eq!(
+        optimized["runtime"],
+        MetricValue::Duration(Duration::from_millis(12))
+    );
     assert_eq!(root["area_savings"], MetricValue::Float(50.0));
     assert_eq!(output.get_metric("mcm.cpu_time"), None);
 }
 
 #[test]
-fn reference_key_includes_actual_coefficients_widths_seed_and_repetitions() {
+fn reference_key_includes_coefficients_width_seed_and_sample_index() {
     let mut fixture = Fixture::new();
     let session = fixture.suite.begin().unwrap();
     let (first, _) = fixture.run(&session, no_artifacts()).unwrap();
@@ -232,10 +187,12 @@ fn reference_key_includes_actual_coefficients_widths_seed_and_repetitions() {
     fixture.suite.input_width = 16;
     let (width, _) = fixture.run(&session, no_artifacts()).unwrap();
     assert_ne!(width.paper.id, seed.paper.id);
-    fixture.suite.repetitions = NonZeroU32::new(1).unwrap();
-    let (repetitions, _) = fixture.run(&session, no_artifacts()).unwrap();
-    assert_eq!(repetitions.paper.samples.len(), 1);
-    assert_ne!(repetitions.paper.id, width.paper.id);
+    let input = fixture.suite.inputs().unwrap().remove(0);
+    let (sample, _) = fixture.run_sample(&session, no_artifacts(), 1).unwrap();
+    assert_ne!(sample.paper.id, width.paper.id);
+    assert_eq!(fixture.suite.inputs().unwrap()[0], input);
+    let (cached, _) = fixture.run_sample(&session, no_artifacts(), 1).unwrap();
+    assert_eq!(cached.paper.id, sample.paper.id);
     tool(
         &fixture.suite.paper.executable,
         &format!("{PAPER}\n# changed binary\n"),
@@ -247,23 +204,27 @@ fn reference_key_includes_actual_coefficients_widths_seed_and_repetitions() {
 }
 
 #[test]
-fn retention_and_diagnostics_do_not_add_measurement_samples() {
+fn retention_and_diagnostics_do_not_add_measurements() {
     let fixture = Fixture::new();
     let session = fixture.suite.begin().unwrap();
     let (_, logs) = fixture
         .run(&session, ArtifactPolicy::new(true, false, false))
         .unwrap();
-    assert_eq!(fs::read_dir(logs.path()).unwrap().count(), 19); // Six commands, three process logs, plus stage logs.
-    for phase in ["baseline-0", "baseline-1", "optimized-0", "optimized-1"] {
+    assert_eq!(fs::read_dir(logs.path()).unwrap().count(), 10);
+    for phase in ["baseline", "optimized"] {
         let directory = logs.path().join("logs").join(phase);
-        for stage in ["synth", "abc", "stat"] {
+        for stage in ["synth", "dfflibmap", "abc", "stat"] {
             assert!(directory.join(format!("{stage}.log")).is_file());
         }
-        if phase.starts_with("optimized") {
-            let mcm = fs::read_to_string(directory.join("before-synth.log")).unwrap();
-            assert!(mcm.contains("depth 2"));
-            assert!(mcm.contains("1 $add"));
-            assert!(!mcm.contains("NAND2_X1"));
+        if phase == "optimized" {
+            assert!(
+                fs::read_to_string(directory.join("mcm.log"))
+                    .unwrap()
+                    .contains("depth 2")
+            );
+            let stats = fs::read_to_string(directory.join("mcm-stat.log")).unwrap();
+            assert!(stats.contains("$add"));
+            assert!(!stats.contains("NAND2_X1"));
             assert!(directory.join("timing.json").is_file());
         }
     }
@@ -278,11 +239,9 @@ fn retention_and_diagnostics_do_not_add_measurement_samples() {
     );
     for entry in fs::read_dir(scripts.path().join("scripts")).unwrap() {
         let directory = entry.unwrap().path();
-        assert!(
-            !fs::read_to_string(directory.join("run.ys"))
-                .unwrap()
-                .contains("write_verilog")
-        );
+        let script = fs::read_to_string(directory.join("run.ys")).unwrap();
+        assert!(!script.contains("write_verilog"));
+        assert!(script.contains("dfflibmap"));
         assert!(fs::read_dir(directory).unwrap().any(|entry| {
             entry
                 .unwrap()
@@ -291,11 +250,9 @@ fn retention_and_diagnostics_do_not_add_measurement_samples() {
                 .starts_with("inspect-")
         }));
     }
-    let (output, netlists) = fixture
+    let (_, netlists) = fixture
         .run(&session, ArtifactPolicy::new(false, false, true))
         .unwrap();
-    assert_eq!(output.optimized.len(), 2);
-    assert_eq!(output.baseline.len(), 2);
     for phase in ["baseline", "optimized"] {
         assert!(
             netlists
@@ -312,6 +269,36 @@ fn retention_and_diagnostics_do_not_add_measurement_samples() {
             .all(|phase| phase.ends_with("-diagnostic"))
     );
     assert_eq!(fs::read_dir(netlists.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn diagnostic_failures_preserve_successful_measurements() {
+    let fixture = Fixture::new();
+    fs::write(
+        format!("{}.fail-diagnostics", fixture.yosys.path().display()),
+        "",
+    )
+    .unwrap();
+    let session = fixture.suite.begin().unwrap();
+    let input = fixture.suite.inputs().unwrap().remove(0);
+    let tools = fixture.suite.tools(&fixture.yosys, &session).unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let mut context = RunContext::new(
+        workspace.path().into(),
+        ArtifactPolicy::new(true, false, true),
+    );
+    let output = McmProcedure.run(&input, &tools, &mut context).unwrap();
+    assert_eq!(
+        *output.optimized.measurements().synthesis.area(),
+        Some(20.0)
+    );
+    assert_eq!(context.diagnostics().len(), 2);
+    assert!(
+        context
+            .diagnostics()
+            .iter()
+            .all(|error| error.contains("deliberate-diagnostic-error"))
+    );
 }
 
 #[test]
@@ -336,7 +323,7 @@ fn failed_and_unsupported_processes_preserve_diagnostics_and_clean_scratch() {
     assert!(
         workspace
             .path()
-            .join("process-000-optimized-0.stderr.log")
+            .join("process-000-optimized.stderr.log")
             .is_file()
     );
     tool(
@@ -423,13 +410,7 @@ fn real_comparison_and_signed_arithmetic() {
         ArtifactPolicy::new(true, true, true),
     );
     let result = McmProcedure.run(&input, &tools, &mut context).unwrap();
-    assert!(
-        result.optimized[0]
-            .measurements()
-            .synthesis
-            .area()
-            .is_some()
-    );
+    assert!(result.optimized.measurements().synthesis.area().is_some());
     for phase in ["baseline", "optimized"] {
         assert!(
             workspace

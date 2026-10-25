@@ -11,14 +11,14 @@ pub enum MetricValue {
 }
 
 impl MetricValue {
-    pub fn kind(&self) -> MetricType {
+    /// Scalar kind; groups and samples are described by their child schemas.
+    pub fn kind(&self) -> Option<MetricType> {
         match self {
-            Self::Int(_) => MetricType::Int,
-            Self::UInt(_) => MetricType::UInt,
-            Self::Float(_) => MetricType::Float,
-            Self::Duration(_) => MetricType::Duration,
-            Self::Group(_) => MetricType::Group,
-            Self::Samples(_) => MetricType::Samples,
+            Self::Int(_) => Some(MetricType::Int),
+            Self::UInt(_) => Some(MetricType::UInt),
+            Self::Float(_) => Some(MetricType::Float),
+            Self::Duration(_) => Some(MetricType::Duration),
+            Self::Group(_) | Self::Samples(_) => None,
         }
     }
 }
@@ -29,8 +29,6 @@ pub enum MetricType {
     UInt,
     Float,
     Duration,
-    Group,
-    Samples,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -63,7 +61,7 @@ impl MetricDescriptor {
 
     pub fn matches_value(&self, value: &MetricValue) -> bool {
         match (self, value) {
-            (Self::Value { kind, .. }, value) => *kind == value.kind(),
+            (Self::Value { kind, .. }, value) => Some(kind) == value.kind().as_ref(),
             (Self::Group { children, .. }, MetricValue::Group(values)) => {
                 matches_group(children, values)
             }
@@ -109,6 +107,43 @@ fn matches_group(children: &[MetricDescriptor], values: &BTreeMap<String, Metric
             .iter()
             .any(|child| child.name() == name && child.matches_value(value))
     })
+}
+
+/// Declare a metric's name, schema, and accessor together.
+#[macro_export]
+macro_rules! benchmark_metrics {
+    ($ty:ty { $( $form:ident $field:ident ( $($args:tt)* ); )* }) => {
+        #[contracts::contract_trait]
+        impl $crate::experiment::BenchmarkOut for $ty {
+            fn list_metrics() -> Vec<$crate::metrics::MetricDescriptor> {
+                vec![$($crate::benchmark_metrics!(@descriptor $form $field ($($args)*))),*]
+            }
+            fn get_metric(&self, name: &str) -> Option<$crate::metrics::MetricValue> {
+                match name {
+                    $(stringify!($field) => $crate::benchmark_metrics!(@value self, $form $field ($($args)*)),)*
+                    _ => None,
+                }
+            }
+        }
+    };
+    (@descriptor group $field:ident ($ty:ty)) => {
+        $crate::metrics::MetricDescriptor::group(stringify!($field), <$ty as $crate::experiment::BenchmarkOut>::list_metrics())
+    };
+    (@descriptor $form:ident $field:ident ($kind:ident, $desc:expr, $unit:expr, $random:expr $(, $get:expr)?)) => {
+        $crate::metrics::MetricDescriptor::new(stringify!($field), $desc, $crate::metrics::MetricType::$kind, $unit, $random)
+    };
+    (@value $this:ident, group $field:ident ($ty:ty)) => {
+        Some($crate::experiment::BenchmarkOut::metrics(&$this.$field))
+    };
+    (@value $this:ident, scalar $field:ident ($kind:ident, $desc:expr, $unit:expr, $random:expr)) => {
+        Some($crate::metrics::MetricValue::$kind($this.$field.into()))
+    };
+    (@value $this:ident, optional $field:ident ($kind:ident, $desc:expr, $unit:expr, $random:expr)) => {
+        $this.$field.map(|value| $crate::metrics::MetricValue::$kind(value.into()))
+    };
+    (@value $this:ident, computed $field:ident ($kind:ident, $desc:expr, $unit:expr, $random:expr, $get:expr)) => {
+        ($get)($this).map($crate::metrics::MetricValue::$kind)
+    };
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@
 
 - Revert README later
 - remove unecessary comments
+- Adding invariants, even though functions can fail, most should not when used "correctly"
 
 # Experiment model
 

@@ -30,15 +30,14 @@ while IFS= read -r line; do
             emit 'mcm: 2 constant multiplier(s) -> 1 adder(s), depth 2, cost 0' ;;
         synth*) synth=1; emit 'synthesis complete' ;;
         abc*) emit 'ABC mapping complete' ;;
+        dfflibmap*) emit 'DFF mapping complete' ;;
         stat*)
-            emit '=== unoptimized ==='
             if [ "$synth" = 0 ]; then
-                emit '1 cells'; emit '1 $add'
+                emit '{"modules":{"\\unoptimized":{"num_cells":1,"num_cells_by_type":{"$add":1}}},"design":{"num_cells":1,"num_cells_by_type":{"$add":1}}}'
             else
                 area=40
                 if [ "$has_mcm" = 1 ]; then area=20; fi
-                emit '5 cells'; emit '5 NAND2_X1'
-                emit "Chip area for module 'unoptimized': $area"
+                emit "{\"modules\":{\"\\\\unoptimized\":{\"num_cells\":5,\"area\":$area,\"num_cells_by_type\":{\"NAND2_X1\":5}}},\"design\":{\"num_cells\":5,\"area\":$area,\"num_cells_by_type\":{\"NAND2_X1\":5}}}"
             fi ;;
         'write_verilog '*)
             diagnostic=1
@@ -46,6 +45,10 @@ while IFS= read -r line; do
             printf 'module unoptimized; endmodule\n' > "$path" ;;
     esac
 done < "$script"
+if [ "$diagnostic" = 1 ] && [ -f "$0.fail-diagnostics" ]; then
+    echo deliberate-diagnostic-error >&2
+    exit 9
+fi
 phase=baseline
 if [ "$has_mcm" = 1 ]; then phase=optimized; fi
 if [ "$diagnostic" = 1 ]; then phase="$phase-diagnostic"; fi

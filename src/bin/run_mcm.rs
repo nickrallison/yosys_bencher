@@ -44,10 +44,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(&path, &json)?;
     eprintln!("Results: {}", path.display());
     println!("{json}");
-    if report
-        .attempts
-        .iter()
-        .any(|attempt| !matches!(attempt.outcome, AttemptOutcome::Success(_)))
+    if !report.revision_failures.is_empty()
+        || report
+            .attempts
+            .iter()
+            .any(|attempt| !matches!(attempt.outcome, AttemptOutcome::Success(_)))
     {
         return Err("some MCM attempts failed or were unsupported; see results.json".into());
     }

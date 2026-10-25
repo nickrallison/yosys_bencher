@@ -1,10 +1,7 @@
 use crate::{
-    experiment::{
-        BenchmarkIn, BenchmarkOut, ExperimentError, Procedure, ProcedureId, ProcessOutput,
-        RunContext,
-    },
+    experiment::{BenchmarkIn, BenchmarkOut, ExperimentError, Procedure, ProcedureId, RunContext},
     metrics::{MetricDescriptor, MetricType, MetricValue},
-    tools::yosys::{Yosys, YosysJob, YosysRunner, design},
+    tools::yosys::{Yosys, YosysJob, YosysRun, YosysRunner, design},
 };
 use contracts::contract_trait;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -21,7 +18,7 @@ pub trait YosysProcedure {
     fn parse(
         &self,
         input: &YosysBenchmarkInput<Self::Config>,
-        output: &ProcessOutput,
+        output: &YosysRun,
     ) -> Result<Self::Measurements>;
 }
 
@@ -54,8 +51,11 @@ impl<P: YosysProcedure> Procedure for YosysBenchmark<P> {
         let job = runner.prepare(&self.procedure.job(input)?, context)?;
         let output = runner.measure(&job, "yosys", context)?;
         let measurements = self.procedure.parse(input, &output)?;
-        runner.diagnose(&job, "yosys", context)?;
-        Ok(YosysBenchmarkOutput::new(output.elapsed, measurements))
+        runner.diagnose(&job, "yosys", context);
+        Ok(YosysBenchmarkOutput::new(
+            output.process.elapsed,
+            measurements,
+        ))
     }
 }
 

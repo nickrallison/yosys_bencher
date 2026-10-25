@@ -1,6 +1,5 @@
 use std::{
     fs,
-    num::NonZeroU32,
     path::PathBuf,
     process::{Command, Output, Stdio},
     time::{Duration, Instant},
@@ -24,13 +23,6 @@ impl ProcessOutput {
     }
 }
 
-pub fn repeat<T>(
-    count: NonZeroU32,
-    mut run: impl FnMut(u32) -> Result<T, ExperimentError>,
-) -> Result<Vec<T>, ExperimentError> {
-    (0..count.get()).map(&mut run).collect()
-}
-
 pub(crate) fn check_label(label: &str) -> Result<(), ExperimentError> {
     if label.is_empty()
         || !label
@@ -52,6 +44,8 @@ pub struct RunContext {
     artifacts: ArtifactPolicy,
     perf: Option<PerfProfiler>,
     processes: usize,
+    sample_index: u32,
+    diagnostics: Vec<String>,
 }
 
 impl RunContext {
@@ -61,12 +55,25 @@ impl RunContext {
             artifacts,
             perf: None,
             processes: 0,
+            sample_index: 0,
+            diagnostics: Vec::new(),
         }
     }
 
     pub fn with_perf(mut self, perf: PerfProfiler) -> Self {
         self.perf = Some(perf);
         self
+    }
+
+    pub fn with_sample_index(mut self, sample_index: u32) -> Self {
+        self.sample_index = sample_index;
+        self
+    }
+
+    pub fn record_diagnostic(&mut self, label: &str, result: Result<(), ExperimentError>) {
+        if let Err(error) = result {
+            self.diagnostics.push(format!("{label}: {error}"));
+        }
     }
 
     /// Only spawning, execution, and output collection contribute to elapsed time.
@@ -95,9 +102,13 @@ impl RunContext {
         let elapsed = start.elapsed();
         if self.artifacts.logs {
             let prefix = self.workspace.join(format!("process-{index:03}-{label}"));
-            fs::write(prefix.with_extension("stdout.log"), &output.stdout)?;
-            fs::write(prefix.with_extension("stderr.log"), &output.stderr)?;
-            fs::write(prefix.with_extension("command.log"), &description)?;
+            let result = (|| -> Result<(), ExperimentError> {
+                fs::write(prefix.with_extension("stdout.log"), &output.stdout)?;
+                fs::write(prefix.with_extension("stderr.log"), &output.stderr)?;
+                fs::write(prefix.with_extension("command.log"), &description)?;
+                Ok(())
+            })();
+            self.record_diagnostic(label, result);
         }
         if !output.status.success() {
             let detail = if output.stderr.is_empty() {

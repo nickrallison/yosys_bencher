@@ -8,7 +8,7 @@ use crate::{
         CellLibrary, TimingConfig, TimingInput, TimingOutput, YosysBenchmark, YosysProcedure,
         design::{Design, SourceFile},
     },
-    tools::yosys::Yosys,
+    tools::yosys::{Yosys, YosysRun},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -36,12 +36,15 @@ impl Procedure for TestProcedure {
         &self,
         _input: &Input,
         tools: &Tools,
-        _context: &mut RunContext,
+        context: &mut RunContext,
     ) -> Result<TimingOutput, ExperimentError> {
         let call = tools.calls.get() + 1;
         tools.calls.set(call);
         if call == 2 {
             return Err(io::Error::other("intermittent failure").into());
+        }
+        if call == 3 {
+            context.record_diagnostic("perf", Err(ExperimentError::Profiling("no stacks".into())));
         }
         Ok(TimingOutput::new(Duration::from_millis(call.into()), ()))
     }
@@ -191,13 +194,11 @@ impl YosysProcedure for InspectYosys {
         assert_eq!(input.config().custom_commands(), &["stat"]);
         Ok(crate::tools::yosys::YosysJob {
             design: input.design().clone(),
-            assets: Vec::new(),
-            commands: vec!["stat".into()],
             ..crate::tools::yosys::YosysJob::default()
         })
     }
 
-    fn parse(&self, _input: &TimingInput, _output: &ProcessOutput) -> Result<(), ExperimentError> {
+    fn parse(&self, _input: &TimingInput, _output: &YosysRun) -> Result<(), ExperimentError> {
         Ok(())
     }
 }
@@ -371,6 +372,7 @@ fn experiment_keeps_attempt_order_continues_failures_and_refreshes_session_and_i
             &RunOptions {
                 artifacts: ArtifactPolicy::new(false, false, false),
                 perf: None,
+                ..RunOptions::default()
             },
         )
         .unwrap();
@@ -423,4 +425,110 @@ fn experiment_keeps_attempt_order_continues_failures_and_refreshes_session_and_i
             .join("attempt.txt")
             .is_file()
     }));
+}
+
+#[test]
+fn shared_sampling_retains_mixed_outcomes_and_does_not_change_identity() {
+    let root = tempfile::tempdir().unwrap();
+    let experiment = Experiment::new(
+        crate::src_manager::git::history::RevisionSelection::All,
+        GeneratedSuite {
+            coefficient: Cell::new(7),
+            procedure: TestProcedure,
+        },
+        root.path().into(),
+    );
+    let mut provider = Provider { builds: 0 };
+    let mut options = RunOptions {
+        repetitions: NonZeroU32::new(3).unwrap(),
+        artifacts: ArtifactPolicy::new(false, false, false),
+        ..RunOptions::default()
+    };
+    let report = experiment.run(&mut provider, &options).unwrap();
+    assert_eq!(report.attempts.len(), 6);
+    for samples in report.attempts.chunks_exact(3) {
+        assert!(matches!(samples[0].outcome, AttemptOutcome::Success(_)));
+        assert!(matches!(samples[1].outcome, AttemptOutcome::Failure(_)));
+        assert!(matches!(samples[2].outcome, AttemptOutcome::Success(_)));
+        assert_eq!(
+            samples
+                .iter()
+                .map(|sample| sample.sample_index)
+                .collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+        assert_eq!(samples[2].diagnostics.len(), 1);
+        assert!(samples[2].diagnostics[0].contains("no stacks"));
+    }
+    options.repetitions = NonZeroU32::new(1).unwrap();
+    let next = experiment.run(&mut provider, &options).unwrap();
+    assert_eq!(report.definition.compare(&next.definition), CmpSuite::Eq);
+}
+
+#[test]
+fn build_failures_retain_previous_results_and_allow_later_revisions() {
+    struct FailingProvider {
+        calls: u32,
+    }
+    impl ToolProvider for FailingProvider {
+        type Tool = ();
+        fn revisions(
+            &mut self,
+            selection: &crate::src_manager::git::history::RevisionSelection,
+        ) -> Result<Vec<crate::src_manager::git::history::Commit>, ExperimentError> {
+            let mut revisions = Provider { builds: 0 }.revisions(selection)?;
+            revisions.push(
+                serde_json::from_value(serde_json::json!({
+                    "id": "3".repeat(40), "committed_at": std::time::UNIX_EPOCH,
+                    "author": "test", "commit_message": "third revision",
+                }))
+                .unwrap(),
+            );
+            Ok(revisions)
+        }
+        fn tool(
+            &mut self,
+            _revision: &crate::src_manager::git::history::Commit,
+        ) -> Result<(), ExperimentError> {
+            self.calls += 1;
+            if self.calls == 2 {
+                Err(io::Error::other("deliberate build failure").into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let experiment = Experiment::new(
+        crate::src_manager::git::history::RevisionSelection::All,
+        GeneratedSuite {
+            coefficient: Cell::new(7),
+            procedure: TestProcedure,
+        },
+        root.path().into(),
+    );
+    let report = experiment
+        .run(&mut FailingProvider { calls: 0 }, &RunOptions::default())
+        .unwrap();
+    assert_eq!(report.attempts.len(), 2);
+    assert!(
+        report
+            .attempts
+            .iter()
+            .all(|attempt| matches!(attempt.outcome, AttemptOutcome::Success(_)))
+    );
+    assert_eq!(report.revision_failures.len(), 1);
+    assert!(
+        report.revision_failures[0]
+            .reason
+            .contains("deliberate build failure")
+    );
+    assert_eq!(
+        report.revision_failures[0].revision.id().id(),
+        &"2".repeat(40)
+    );
+    assert_eq!(report.attempts[1].revision.id().id(), &"3".repeat(40));
+    let serialized = serde_json::to_value(&report).unwrap();
+    assert_eq!(serialized["attempts"].as_array().unwrap().len(), 2);
+    assert_eq!(serialized["revision_failures"].as_array().unwrap().len(), 1);
 }

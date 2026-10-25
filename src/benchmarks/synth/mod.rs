@@ -3,11 +3,9 @@ pub use crate::benchmarks::yosys::{
 };
 pub use crate::tools::yosys::design;
 use crate::{
-    experiment::{BenchmarkIn, BenchmarkOut, ExperimentError, ProcedureId, ProcessOutput, Suite},
-    metrics::{MetricDescriptor, MetricType, MetricValue},
-    tools::yosys::{Statistics, Yosys, YosysJob, argument, design::SourceFile, hierarchy_commands},
+    experiment::{BenchmarkIn, ExperimentError, ProcedureId, Suite},
+    tools::yosys::{Yosys, YosysJob, YosysRun, argument, design::SourceFile, hierarchy_commands},
 };
-use contracts::contract_trait;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path};
 
@@ -69,37 +67,11 @@ pub struct SynthMeasurements {
     cell_count: HashMap<String, u64>,
 }
 
-#[contract_trait]
-impl BenchmarkOut for SynthMeasurements {
-    fn list_metrics() -> Vec<MetricDescriptor> {
-        vec![
-            MetricDescriptor::new(
-                "area",
-                "Mapped synthesis area",
-                MetricType::Float,
-                "area",
-                false,
-            ),
-            MetricDescriptor::new(
-                "cell_count",
-                "Total number of cells",
-                MetricType::UInt,
-                "cells",
-                false,
-            ),
-        ]
-    }
-
-    fn get_metric(&self, name: &str) -> Option<MetricValue> {
-        match name {
-            "area" => self.area.map(MetricValue::Float),
-            "cell_count" => self
-                .cell_count
-                .values()
-                .try_fold(0_u64, |total, count| total.checked_add(*count))
-                .map(MetricValue::UInt),
-            _ => None,
-        }
+crate::benchmark_metrics! {
+    SynthMeasurements {
+        optional area(Float, "Mapped synthesis area", "area", false);
+        computed cell_count(UInt, "Total number of cells", "cells", false,
+            |this: &SynthMeasurements| this.cell_count.values().try_fold(0_u64, |sum, count| sum.checked_add(*count)));
     }
 }
 
@@ -122,17 +94,18 @@ impl YosysProcedure for TimingProcedure {
     }
 
     fn job(&self, input: &TimingInput) -> Result<YosysJob> {
-        let mut commands = hierarchy_commands(input.design())?;
-        commands.extend(input.config().custom_commands().iter().cloned());
-        Ok(YosysJob {
+        let mut job = YosysJob {
             design: input.design().clone(),
-            assets: Vec::new(),
-            commands,
             ..YosysJob::default()
-        })
+        };
+        job.stage("hierarchy", hierarchy_commands(input.design())?)?;
+        if !input.config().custom_commands().is_empty() {
+            job.stage("commands", input.config().custom_commands().clone())?;
+        }
+        Ok(job)
     }
 
-    fn parse(&self, _input: &TimingInput, _output: &ProcessOutput) -> Result<()> {
+    fn parse(&self, _input: &TimingInput, _output: &YosysRun) -> Result<()> {
         Ok(())
     }
 }
@@ -140,40 +113,51 @@ impl YosysProcedure for TimingProcedure {
 pub struct SynthFlow;
 
 impl SynthFlow {
-    pub fn job(
-        design: &design::Design,
-        config: &SynthConfig,
-        before_synth: &[String],
-    ) -> Result<YosysJob> {
+    pub fn job(design: &design::Design, config: &SynthConfig) -> Result<YosysJob> {
         let mut job = YosysJob {
             design: design.clone(),
-            assets: vec![SourceFile::new("cells.lib", config.cell_lib.liberty())],
-            commands: hierarchy_commands(design)?,
             ..YosysJob::default()
         };
-        if !before_synth.is_empty() {
-            job.tee("before-synth", before_synth)?;
+        job.stage("hierarchy", hierarchy_commands(design)?)?;
+        Self::append(&mut job, config)?;
+        Ok(job)
+    }
+
+    /// Append the standard flow after any benchmark-specific stages.
+    pub fn append(job: &mut YosysJob, config: &SynthConfig) -> Result<()> {
+        job.assets
+            .push(SourceFile::new("cells.lib", config.cell_lib.liberty()));
+        if !config.custom_commands.is_empty() {
+            job.stage("custom", config.custom_commands.clone())?;
         }
-        job.commands.extend(config.custom_commands.iter().cloned());
-        let top = design
+        let top = job
+            .design
             .top
             .as_deref()
             .map(argument)
             .transpose()?
             .map(|top| format!(" -top {top}"))
             .unwrap_or_default();
-        job.tee("synth", &[format!("synth{top} -noabc")])?;
-        job.tee("abc", &["abc -liberty cells.lib".into()])?;
-        job.tee("stat", &["stat -liberty cells.lib".into()])?;
-        Ok(job)
+        job.stage("synth", vec![format!("synth{top} -noabc")])?;
+        job.stage("dfflibmap", vec!["dfflibmap -liberty cells.lib".into()])?;
+        job.stage("abc", vec!["abc -liberty cells.lib".into()])?;
+        job.stage("stat", vec!["stat -json -liberty cells.lib".into()])?;
+        Ok(())
     }
 }
 
 impl SynthMeasurements {
-    pub fn parse(output: &ProcessOutput, top: Option<&str>) -> Result<Self> {
-        let stats = Statistics::parse(output.stdout()?, top)?;
+    pub fn parse(output: &YosysRun) -> Result<Self> {
+        let stats = output.statistics("stat")?;
+        let area = if stats.cell_count.keys().any(|name| name.starts_with('$')) {
+            None
+        } else if stats.cell_count.is_empty() {
+            Some(0.0)
+        } else {
+            stats.area
+        };
         Ok(Self {
-            area: stats.area,
+            area,
             cell_count: stats.cell_count,
         })
     }
@@ -189,10 +173,10 @@ impl YosysProcedure for SynthProcedure {
         ProcedureId::new("yosys.synth", 1)
     }
     fn job(&self, input: &SynthInput) -> Result<YosysJob> {
-        SynthFlow::job(input.design(), input.config(), &[])
+        SynthFlow::job(input.design(), input.config())
     }
-    fn parse(&self, input: &SynthInput, output: &ProcessOutput) -> Result<SynthMeasurements> {
-        SynthMeasurements::parse(output, input.design().top.as_deref())
+    fn parse(&self, _input: &SynthInput, output: &YosysRun) -> Result<SynthMeasurements> {
+        SynthMeasurements::parse(output)
     }
 }
 
@@ -253,3 +237,6 @@ impl Suite for SynthSuite {
         Ok(tool.clone())
     }
 }
+
+#[cfg(test)]
+mod tests;

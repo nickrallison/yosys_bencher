@@ -8,7 +8,6 @@ fn job() -> YosysJob {
             ..Design::default()
         },
         assets: Vec::new(),
-        commands: vec!["stat".into()],
         ..YosysJob::default()
     }
 }
@@ -92,10 +91,10 @@ fn stage_logs_are_fresh_per_execution_and_failures_keep_partial_logs() {
         ArtifactPolicy::new(true, false, false),
     );
     let mut job = job();
-    job.tee("stage", &["stat".into()]).unwrap();
+    job.stage("stage", vec!["stat".into()]).unwrap();
     let prepared = runner.prepare(&job, &mut context).unwrap();
-    runner.measure(&prepared, "first", &mut context).unwrap();
-    assert_eq!(prepared.read_log("stage").unwrap(), "first\n");
+    let first = runner.measure(&prepared, "first", &mut context).unwrap();
+    assert_eq!(first.log("stage").unwrap(), "first\n");
 
     fs::write(
         &executable,
@@ -116,37 +115,30 @@ fn stage_logs_are_fresh_per_execution_and_failures_keep_partial_logs() {
         runner.measure(&prepared, "missing", &mut context),
         Err(ExperimentError::Parse(_))
     ));
-    assert!(prepared.read_log("stage").is_err());
+    assert_eq!(first.log("stage").unwrap(), "first\n");
 }
 
 #[test]
-fn statistics_select_final_top_and_support_old_and_current_tables() {
-    let old = "=== child ===\nNumber of cells: 1\n 1 $mul\n=== arbitrary ===\nNumber of cells: 3\n 1 $add\n 2 $mul\n";
-    let current = "=== arbitrary ===\n3 - cells\n1 - $add\n1 - $sub\n1 - $neg\nChip area for top module 'arbitrary': 1.25e2\n";
-    let stats = Statistics::parse(&format!("{old}{current}"), Some("arbitrary")).unwrap();
-    assert_eq!(stats.cell_count.get("$mul"), None);
-    assert_eq!(stats.cell_count.get("$sub"), Some(&1));
-    assert_eq!(stats.area, Some(125.0));
+fn statistics_count_leaf_cells_across_the_whole_hierarchy() {
+    let text = r#"{"modules":{"\\top":{"num_cells":0,"num_cells_by_type":{"child":2}},"\\child":{"num_cells":1,"num_cells_by_type":{"NAND2_X1":1}}},"design":{"num_cells":2,"area":84.588,"num_cells_by_type":{"child":2,"NAND2_X1":2}}}"#;
+    let stats = Statistics::parse(text).unwrap();
+    assert_eq!(stats.cell_count, HashMap::from([("NAND2_X1".into(), 2)]));
+    assert_eq!(stats.area, Some(84.588));
+    // Historical stat JSON counted module instances in num_cells.
     assert_eq!(
-        Statistics::parse(old, Some("arbitrary")).unwrap().area,
-        None
-    );
-    assert_eq!(Statistics::parse(current, None).unwrap().top, "arbitrary");
-    assert_eq!(
-        Statistics::parse(&format!("Top module: \\arbitrary\n{old}"), None)
-            .unwrap()
-            .top,
-        "arbitrary"
+        Statistics::parse(&text.replace("\"num_cells\":2,\"area\"", "\"num_cells\":4,\"area\""))
+            .unwrap(),
+        stats
     );
     for broken in [
         "",
-        "=== arbitrary ===\n",
-        "=== arbitrary ===\n2 cells\n1 $add\n",
-        "=== arbitrary ===\n1 cells\n1 $add\nChip area for module 'arbitrary': NaN\n",
+        "{}",
+        r#"{"modules":{}}"#,
+        r#"{"modules":{"top":{"num_cells":2,"num_cells_by_type":{"$add":1}}}}"#,
+        r#"{"modules":{"top":{"num_cells":0,"num_cells_by_type":{},"area":-1}}}"#,
     ] {
-        assert!(Statistics::parse(broken, Some("arbitrary")).is_err());
+        assert!(Statistics::parse(broken).is_err());
     }
-    assert!(Statistics::parse(old, None).is_err());
 }
 
 #[test]
@@ -179,23 +171,17 @@ fn real_frontend_handles_filelists_includes_defines_and_parameters() {
     commands.extend([
         "select -assert-count 2 top/w:x top/w:y".into(),
         "write_rtlil result.il".into(),
-        "stat".into(),
     ]);
-    let prepared = runner
-        .prepare(
-            &YosysJob {
-                design,
-                assets: Vec::new(),
-                commands,
-                ..YosysJob::default()
-            },
-            &mut context,
-        )
-        .unwrap();
+    let mut job = YosysJob {
+        design,
+        ..YosysJob::default()
+    };
+    job.stage("frontend", commands).unwrap();
+    job.stage("stat", vec!["stat -json".into()]).unwrap();
+    let prepared = runner.prepare(&job, &mut context).unwrap();
     let result = runner.measure(&prepared, "frontend", &mut context).unwrap();
     let rtl = fs::read_to_string(prepared.directory.path().join("result.il")).unwrap();
     assert!(rtl.contains("wire width 8 input"), "{rtl}");
     assert!(rtl.contains("wire width 8 output"), "{rtl}");
-    Statistics::parse(result.stdout().unwrap(), None)
-        .unwrap_or_else(|error| panic!("{error}\n{}", result.stdout().unwrap()));
+    result.statistics("stat").unwrap();
 }

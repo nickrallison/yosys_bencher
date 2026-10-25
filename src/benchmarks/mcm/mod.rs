@@ -2,14 +2,15 @@
 
 use crate::{
     benchmarks::synth::{CellLibrary, SynthConfig, SynthFlow, SynthMeasurements, SynthOutput},
-    experiment::{BenchmarkIn, ExperimentError, Procedure, ProcedureId, RunContext, Suite, repeat},
+    experiment::{BenchmarkIn, ExperimentError, Procedure, ProcedureId, RunContext, Suite},
     tools::yosys::{
-        Yosys, YosysRunner,
+        Yosys, YosysJob, YosysRunner,
         design::{Design, SourceFile},
+        hierarchy_commands,
     },
 };
 use serde::{Deserialize, Serialize};
-use std::{num::NonZeroU32, rc::Rc};
+use std::rc::Rc;
 
 mod design;
 mod generate;
@@ -54,7 +55,6 @@ pub struct McmInput {
     pub options: McmOptions,
     pub synthesis: SynthConfig,
     pub paper_identity: PaperToolId,
-    pub repetitions: NonZeroU32,
 }
 
 impl BenchmarkIn for McmInput {}
@@ -94,46 +94,47 @@ impl Procedure for McmProcedure {
             input.options.max_depth, input.options.search_budget
         );
         let runner = YosysRunner::new(&tools.yosys)?;
-        let baseline = runner.prepare(&SynthFlow::job(&design, &input.synthesis, &[])?, context)?;
-        let optimized = runner.prepare(
-            &SynthFlow::job(&design, &input.synthesis, &[mcm, "stat".into()])?,
-            context,
-        )?;
-        let optimized_samples = repeat(input.repetitions, |index| {
-            let (output, timings) = runner
-                .measure_with_timings(&optimized, &format!("optimized-{index}"), context)
-                .map_err(mcm_error)?;
-            let cpu_time = timings
-                .get("mcm")
-                .copied()
-                .ok_or_else(|| ExperimentError::Parse("missing MCM pass timing".into()))?;
-            Ok(OptimizedOutput::new(
-                output.elapsed,
-                OptimizedMeasurements {
-                    mcm: McmMeasurements::parse(
-                        &optimized.read_log("before-synth")?,
-                        "unoptimized",
-                        cpu_time,
-                    )?,
-                    synthesis: SynthMeasurements::parse(&output, Some("unoptimized"))?,
-                },
-            ))
-        })?;
+        let baseline = runner.prepare(&SynthFlow::job(&design, &input.synthesis)?, context)?;
+        let mut optimized_job = YosysJob {
+            design,
+            timings: true,
+            ..YosysJob::default()
+        };
+        optimized_job.stage("hierarchy", hierarchy_commands(&optimized_job.design)?)?;
+        optimized_job.stage("mcm", vec![mcm])?;
+        optimized_job.stage("mcm-stat", vec!["stat -json".into()])?;
+        SynthFlow::append(&mut optimized_job, &input.synthesis)?;
+        let optimized = runner.prepare(&optimized_job, context)?;
+        let output = runner
+            .measure(&optimized, "optimized", context)
+            .map_err(mcm_error)?;
+        let cpu_time = output
+            .pass_timings
+            .get("mcm")
+            .copied()
+            .ok_or_else(|| ExperimentError::Parse("missing MCM pass timing".into()))?;
+        let optimized_output = OptimizedOutput::new(
+            output.process.elapsed,
+            OptimizedMeasurements {
+                mcm: McmMeasurements::parse(
+                    output.log("mcm")?,
+                    &output.statistics("mcm-stat")?,
+                    cpu_time,
+                )?,
+                synthesis: SynthMeasurements::parse(&output)?,
+            },
+        );
         let paper = tools.paper.reference(input, context)?;
-        let baseline_samples = repeat(input.repetitions, |index| {
-            let output = runner.measure(&baseline, &format!("baseline-{index}"), context)?;
-            Ok(SynthOutput::new(
-                output.elapsed,
-                SynthMeasurements::parse(&output, Some("unoptimized"))?,
-            ))
-        })?;
+        let output = runner.measure(&baseline, "baseline", context)?;
+        let baseline_output =
+            SynthOutput::new(output.process.elapsed, SynthMeasurements::parse(&output)?);
         for (phase, job) in [("baseline", &baseline), ("optimized", &optimized)] {
-            runner.diagnose_repeated(job, phase, input.repetitions, context)?;
+            runner.diagnose(job, phase, context);
         }
         Ok(McmOutput {
             paper,
-            baseline: baseline_samples,
-            optimized: optimized_samples,
+            baseline: baseline_output,
+            optimized: optimized_output,
         })
     }
 }
@@ -158,7 +159,6 @@ pub struct McmSuite {
     pub library: CellLibrary,
     pub paper: PaperTool,
     pub options: McmOptions,
-    pub repetitions: NonZeroU32,
     procedure: McmProcedure,
 }
 
@@ -171,7 +171,6 @@ impl McmSuite {
             library,
             paper,
             options: McmOptions::default(),
-            repetitions: NonZeroU32::new(1).unwrap(),
             procedure: McmProcedure,
         }
     }
@@ -200,7 +199,6 @@ impl Suite for McmSuite {
                 options: self.options.clone(),
                 synthesis: SynthConfig::new(self.library.clone(), Vec::new()),
                 paper_identity: identity.clone(),
-                repetitions: self.repetitions,
             })
             .collect())
     }

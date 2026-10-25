@@ -97,20 +97,29 @@ fn experiment_builds_two_revisions_and_runs_composed_mcm_without_storage() {
             &RunOptions {
                 artifacts: ArtifactPolicy::new(false, false, false),
                 perf: None,
+                repetitions: std::num::NonZeroU32::new(2).unwrap(),
             },
         )
         .unwrap();
     let report = serde_json::to_value(report).unwrap();
     let attempts = report["attempts"].as_array().unwrap();
-    assert_eq!(attempts.len(), 2);
+    assert_eq!(attempts.len(), 4);
     assert_eq!(attempts[0]["revision"]["id"], first);
-    assert_eq!(attempts[1]["revision"]["id"], second);
+    assert_eq!(attempts[2]["revision"]["id"], second);
     assert!(
         attempts
             .iter()
             .all(|attempt| attempt["outcome"]["Success"].is_object())
     );
     assert_eq!(
+        attempts[0]["outcome"]["Success"]["paper"]["id"],
+        attempts[2]["outcome"]["Success"]["paper"]["id"]
+    );
+    assert_eq!(
+        attempts[1]["outcome"]["Success"]["paper"]["id"],
+        attempts[3]["outcome"]["Success"]["paper"]["id"]
+    );
+    assert_ne!(
         attempts[0]["outcome"]["Success"]["paper"]["id"],
         attempts[1]["outcome"]["Success"]["paper"]["id"]
     );
@@ -119,7 +128,7 @@ fn experiment_builds_two_revisions_and_runs_composed_mcm_without_storage() {
             .unwrap()
             .lines()
             .count(),
-        1
+        2
     );
     let directory = Path::new(report["directory"].as_str().unwrap());
     assert_eq!(fs::read_dir(directory).unwrap().count(), 0);
