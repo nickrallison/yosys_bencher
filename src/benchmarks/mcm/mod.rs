@@ -21,6 +21,10 @@ pub use generate::{CoefficientGenerator, CoefficientSets};
 pub use output::{McmMeasurements, McmOutput, OptimizedMeasurements, OptimizedOutput, PaperStats};
 pub use paper::{PaperReference, PaperSession, PaperTool, PaperToolId};
 
+/// Temporary placeholder until suite/procedure versions are derived from the store.
+#[deprecated(
+    note = "Replace the hardcoded MCM version with version computation from the DB/store and suites."
+)]
 pub const VERSION: u32 = 1;
 type Result<T> = std::result::Result<T, ExperimentError>;
 
@@ -67,6 +71,7 @@ impl Procedure for McmProcedure {
     type Tools = McmTools;
     type Output = McmOutput;
 
+    #[allow(deprecated)] // The placeholder remains in use until the store exists.
     fn id(&self) -> ProcedureId {
         ProcedureId::new("mcm", VERSION)
     }

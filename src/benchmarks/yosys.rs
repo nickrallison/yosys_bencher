@@ -109,14 +109,15 @@ impl<M> YosysBenchmarkOutput<M> {
 impl<M: BenchmarkOut> BenchmarkOut for YosysBenchmarkOutput<M> {
     fn list_metrics() -> Vec<MetricDescriptor> {
         let mut metrics = vec![YosysBenchmarkOutput::<M>::runtime_descriptor()];
-        metrics.extend(M::list_metrics());
+        metrics.push(MetricDescriptor::group("measurements", M::list_metrics()));
         metrics
     }
 
     fn get_metric(&self, name: &str) -> Option<MetricValue> {
         match name {
             "runtime" => Some(MetricValue::Duration(self.runtime)),
-            _ => self.measurements.get_metric(name),
+            "measurements" => Some(self.measurements.metrics()),
+            _ => None,
         }
     }
 }

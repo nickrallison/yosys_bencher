@@ -52,9 +52,22 @@ impl BenchmarkIn for () {}
 pub trait BenchmarkOut: Clone + Serialize + DeserializeOwned {
     fn list_metrics() -> Vec<MetricDescriptor>;
 
+    /// Metric values with the same hierarchy as `list_metrics`, preserving samples.
+    fn metrics(&self) -> MetricValue {
+        MetricValue::Group(
+            Self::list_metrics()
+                .iter()
+                .filter_map(|descriptor| {
+                    self.get_metric(descriptor.name())
+                        .map(|value| (descriptor.name().into(), value))
+                })
+                .collect(),
+        )
+    }
+
     #[debug_ensures(ret.as_ref().is_none_or(|value| {
         Self::list_metrics().iter().any(|descriptor| {
-            *descriptor.name() == name && descriptor.matches_value(value)
+            descriptor.name() == name && descriptor.matches_value(value)
         })
     }))]
     fn get_metric(&self, name: &str) -> Option<MetricValue>;

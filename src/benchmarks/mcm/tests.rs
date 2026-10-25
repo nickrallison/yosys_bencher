@@ -111,11 +111,6 @@ fn comparison_preserves_samples_and_reuses_references_only_within_session() {
         );
     }
     assert_eq!(
-        first.get_metric("mcm.cpu_time"),
-        Some(MetricValue::Duration(Duration::from_micros(2500)))
-    );
-    assert_eq!(first.get_metric("runtime_ratio"), None);
-    assert_eq!(
         fixture.events(),
         [
             "optimized",
@@ -152,6 +147,75 @@ fn comparison_preserves_samples_and_reuses_references_only_within_session() {
     let recorded: McmOutput =
         serde_json::from_str(&serde_json::to_string(&first).unwrap()).unwrap();
     assert_eq!(recorded.paper.id, first.paper.id);
+}
+
+#[test]
+fn metric_hierarchy_preserves_individual_samples_and_optional_values() {
+    use crate::metrics::MetricDescriptor;
+
+    let fixture = Fixture::new();
+    let session = fixture.suite.begin().unwrap();
+    let (mut output, _) = fixture.run(&session, no_artifacts()).unwrap();
+    let mut second = output.optimized[1].measurements().clone();
+    second.mcm.cpu_time = Duration::from_millis(9);
+    second.mcm.depth = None;
+    output.optimized[1] = OptimizedOutput::new(Duration::from_millis(12), second);
+
+    let metrics = output.metrics();
+    assert!(MetricDescriptor::group("output", McmOutput::list_metrics()).matches_value(&metrics));
+    let MetricValue::Group(root) = metrics else {
+        panic!("expected root group")
+    };
+    let MetricValue::Samples(optimized) = &root["optimized"] else {
+        panic!("expected optimized samples")
+    };
+    assert_eq!(optimized.len(), 2);
+    for (index, sample) in optimized.iter().enumerate() {
+        let MetricValue::Group(sample) = sample else {
+            panic!("expected sample group")
+        };
+        let MetricValue::Group(measurements) = &sample["measurements"] else {
+            panic!("expected measurements group")
+        };
+        let MetricValue::Group(mcm) = &measurements["mcm"] else {
+            panic!("expected MCM group")
+        };
+        let MetricValue::Group(synthesis) = &measurements["synthesis"] else {
+            panic!("expected synthesis group")
+        };
+        assert_eq!(synthesis["area"], MetricValue::Float(20.0));
+        assert!(!measurements.contains_key("area"));
+        if index == 0 {
+            assert_eq!(
+                mcm["cpu_time"],
+                MetricValue::Duration(Duration::from_micros(2500))
+            );
+            assert_eq!(mcm["depth"], MetricValue::UInt(2));
+        } else {
+            assert_eq!(
+                mcm["cpu_time"],
+                MetricValue::Duration(Duration::from_millis(9))
+            );
+            assert!(!mcm.contains_key("depth"));
+            assert_eq!(
+                sample["runtime"],
+                MetricValue::Duration(Duration::from_millis(12))
+            );
+        }
+    }
+    let MetricValue::Group(paper) = &root["paper"] else {
+        panic!("expected paper group")
+    };
+    let MetricValue::Samples(samples) = &paper["samples"] else {
+        panic!("expected paper samples")
+    };
+    assert_eq!(samples.len(), 2);
+    let MetricValue::Samples(baseline) = &root["baseline"] else {
+        panic!("expected baseline samples")
+    };
+    assert_eq!(baseline.len(), 2);
+    assert_eq!(root["area_savings"], MetricValue::Float(50.0));
+    assert_eq!(output.get_metric("mcm.cpu_time"), None);
 }
 
 #[test]

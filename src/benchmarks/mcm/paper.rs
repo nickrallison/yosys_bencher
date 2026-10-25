@@ -1,5 +1,9 @@
-use super::{McmInput, PaperStats, VERSION, parse};
-use crate::experiment::{ExperimentError, RunContext, repeat};
+use super::{McmInput, PaperStats, parse};
+use crate::{
+    experiment::{BenchmarkOut, ExperimentError, RunContext, repeat},
+    metrics::{MetricDescriptor, MetricValue},
+};
+use contracts::contract_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -40,6 +44,25 @@ pub struct PaperReference {
     pub os: String,
     pub arch: String,
     pub samples: Vec<PaperStats>,
+}
+
+#[contract_trait]
+impl BenchmarkOut for PaperReference {
+    fn list_metrics() -> Vec<MetricDescriptor> {
+        vec![MetricDescriptor::samples(
+            "samples",
+            PaperStats::list_metrics(),
+        )]
+    }
+
+    fn get_metric(&self, name: &str) -> Option<MetricValue> {
+        match name {
+            "samples" => Some(MetricValue::Samples(
+                self.samples.iter().map(BenchmarkOut::metrics).collect(),
+            )),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -97,8 +120,9 @@ impl PaperSession {
         context: &mut RunContext,
     ) -> Result<PaperReference> {
         self.validate_identity(&input.paper_identity)?;
+        #[allow(deprecated)] // Keep reference identity tied to the current procedure.
         let key = PaperKey {
-            procedure: VERSION,
+            procedure: super::VERSION,
             coefficients: input.coefficients.clone(),
             input_width: input.input_width,
             bit_width: input.options.paper_bit_width,
