@@ -1,3 +1,4 @@
+pub mod external;
 pub mod perf;
 pub mod yosys;
 

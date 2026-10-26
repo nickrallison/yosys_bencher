@@ -70,7 +70,7 @@ impl CoefficientGenerator {
             || self.scale <= 0.0
         {
             return Err(Error::Config(
-                "invalid MCM coefficient generator settings".into(),
+                "invalid coefficient generator settings".into(),
             ));
         }
         let mut random = SmallRng::seed_from_u64(self.seed);

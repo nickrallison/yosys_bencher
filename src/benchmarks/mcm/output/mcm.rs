@@ -1,4 +1,7 @@
-use crate::{experiment::ExperimentError, tools::yosys::Statistics};
+use crate::{
+    experiment::ExperimentError,
+    tools::yosys::{Statistics, YosysRun},
+};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -13,6 +16,14 @@ pub struct McmMeasurements {
 }
 
 impl McmMeasurements {
+    pub fn parse_run(run: &YosysRun) -> Result<Self, ExperimentError> {
+        Self::parse(
+            run.log("mcm")?,
+            &run.statistics("mcm-stat")?,
+            run.pass_time("mcm")?,
+        )
+    }
+
     pub fn parse(
         text: &str,
         stats: &Statistics,

@@ -1,23 +1,20 @@
 //! MCM and baseline synthesis comparison with a paper reference.
 
 use crate::{
-    benchmarks::{
-        synth::{CellLibrary, SynthConfig, SynthFlow, SynthMeasurements},
-        yosys::measure,
-    },
+    benchmarks::synth::{CellLibrary, SynthConfig, comparison::compare},
     experiment::{BenchmarkIn, ExperimentError, Procedure, RunContext, Suite},
-    tools::yosys::{Yosys, YosysJob, YosysRunner, design::Design, hierarchy_commands},
+    tools::yosys::Yosys,
 };
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 
+mod coefficients;
 mod design;
-mod generate;
 mod output;
 mod paper;
 mod parse;
 
-pub use generate::{CoefficientGenerator, CoefficientSets};
+pub use coefficients::{CoefficientGenerator, CoefficientSets};
 pub use output::{McmMeasurements, McmOutput, OptimizedMeasurements, OptimizedOutput, PaperStats};
 pub use paper::{PaperReference, PaperSession, PaperTool, PaperToolId};
 
@@ -124,66 +121,24 @@ impl Procedure for McmProcedure {
         input.validate()?;
         tools.paper.validate_identity(&input.paper_identity)?;
         let design = design::build(input)?;
-        let runner = YosysRunner::new(&tools.yosys)?;
-        let baseline = runner.prepare(&SynthFlow::job(&design, &input.synthesis)?, context)?;
-        let optimized = runner.prepare(&optimized_job(input, design)?, context)?;
-        let optimized_output = measure(
-            &runner,
-            &optimized,
-            "optimized",
+        compare(
+            &tools.yosys,
+            &design,
+            &input.synthesis,
             context,
-            OptimizedMeasurements::parse,
+            |job| {
+                job.stage_with_statistics(
+                    "mcm",
+                    vec![format!(
+                        "mcm -depth {} -search_budget {}",
+                        input.options.max_depth, input.options.search_budget,
+                    )],
+                )
+            },
+            McmMeasurements::parse_run,
+            |context| tools.paper.reference(input, context),
         )
-        .map_err(mcm_error)?;
-        let paper = tools.paper.reference(input, context)?;
-        let baseline_output = measure(
-            &runner,
-            &baseline,
-            "baseline",
-            context,
-            SynthMeasurements::parse,
-        )?;
-        for (phase, job) in [("baseline", &baseline), ("optimized", &optimized)] {
-            runner.diagnose(job, phase, context);
-        }
-        Ok(McmOutput {
-            paper,
-            baseline: baseline_output,
-            optimized: optimized_output,
-        })
     }
-}
-
-fn optimized_job(input: &McmInput, design: Design) -> Result<YosysJob> {
-    let mut job = YosysJob {
-        design,
-        timings: true,
-        ..YosysJob::default()
-    };
-    job.stage("hierarchy", hierarchy_commands(&job.design)?)?;
-    job.stage(
-        "mcm",
-        vec![format!(
-            "mcm -depth {} -search_budget {}",
-            input.options.max_depth, input.options.search_budget
-        )],
-    )?;
-    job.stage("mcm-stat", vec!["stat -json".into()])?;
-    SynthFlow::append(&mut job, &input.synthesis)?;
-    Ok(job)
-}
-
-fn mcm_error(error: ExperimentError) -> ExperimentError {
-    if let ExperimentError::Process { stdout, stderr, .. } = &error
-        && [stdout, stderr]
-            .iter()
-            .any(|bytes| String::from_utf8_lossy(bytes).contains("No such command: mcm"))
-    {
-        return ExperimentError::Unsupported(
-            "this Yosys revision does not provide the mcm pass".into(),
-        );
-    }
-    error
 }
 
 pub struct McmSuite {

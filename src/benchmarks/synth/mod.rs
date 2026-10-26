@@ -4,12 +4,14 @@ pub use crate::benchmarks::yosys::{
 pub use crate::tools::yosys::design;
 use crate::{
     experiment::{BenchmarkIn, ExperimentError, Suite},
-    tools::yosys::{Yosys, YosysJob, YosysRun, argument, design::SourceFile, hierarchy_commands},
+    tools::yosys::{Yosys, YosysJob, YosysRun, argument, design::SourceFile},
 };
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path};
 
 type Result<T> = std::result::Result<T, ExperimentError>;
+
+pub mod comparison;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Getters)]
 pub struct TimingConfig {
@@ -94,11 +96,7 @@ impl YosysProcedure for TimingProcedure {
     }
 
     fn job(&self, input: &TimingInput) -> Result<YosysJob> {
-        let mut job = YosysJob {
-            design: input.design().clone(),
-            ..YosysJob::default()
-        };
-        job.stage("hierarchy", hierarchy_commands(input.design())?)?;
+        let mut job = YosysJob::new(input.design().clone())?;
         if !input.config().custom_commands().is_empty() {
             job.stage("commands", input.config().custom_commands().clone())?;
         }
@@ -114,11 +112,7 @@ pub struct SynthFlow;
 
 impl SynthFlow {
     pub fn job(design: &design::Design, config: &SynthConfig) -> Result<YosysJob> {
-        let mut job = YosysJob {
-            design: design.clone(),
-            ..YosysJob::default()
-        };
-        job.stage("hierarchy", hierarchy_commands(design)?)?;
+        let mut job = YosysJob::new(design.clone())?;
         Self::append(&mut job, config)?;
         Ok(job)
     }

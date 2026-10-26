@@ -116,6 +116,16 @@ fn stage_logs_are_fresh_per_execution_and_failures_keep_partial_logs() {
         Err(ExperimentError::Parse(_))
     ));
     assert_eq!(first.log("stage").unwrap(), "first\n");
+
+    fs::write(
+        &executable,
+        "#!/bin/sh\necho 'ERROR: No such command: custom_opt' >&2\nexit 1\n",
+    )
+    .unwrap();
+    assert!(matches!(
+        runner.measure(&prepared, "unsupported", &mut context),
+        Err(ExperimentError::Unsupported(reason)) if reason.contains("custom_opt")
+    ));
 }
 
 #[test]

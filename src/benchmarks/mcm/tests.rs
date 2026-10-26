@@ -96,10 +96,13 @@ fn comparison_preserves_observations_and_reuses_references_only_within_session()
     );
     assert!(*first.optimized.runtime() > Duration::ZERO);
     let measurements = first.optimized.measurements();
-    assert_eq!(measurements.mcm.adds_subs, 1);
-    assert_eq!(measurements.mcm.multipliers, 0);
-    assert_eq!(measurements.mcm.depth, Some(2));
-    assert_eq!(measurements.mcm.cpu_time, Duration::from_micros(2500));
+    assert_eq!(measurements.optimization.adds_subs, 1);
+    assert_eq!(measurements.optimization.multipliers, 0);
+    assert_eq!(measurements.optimization.depth, Some(2));
+    assert_eq!(
+        measurements.optimization.cpu_time,
+        Duration::from_micros(2500)
+    );
     assert_eq!(
         measurements.synthesis.cell_count().get("NAND2_X1"),
         Some(&5)
@@ -107,8 +110,8 @@ fn comparison_preserves_observations_and_reuses_references_only_within_session()
     assert_eq!(fixture.events(), ["optimized", "paper", "baseline"]);
     assert_eq!(fs::read_dir(workspace.path()).unwrap().count(), 0);
     let (second, _) = fixture.run(&session, no_artifacts()).unwrap();
-    assert_eq!(first.paper.id, second.paper.id);
-    assert_eq!(first.paper.measured_at, second.paper.measured_at);
+    assert_eq!(first.reference.id, second.reference.id);
+    assert_eq!(first.reference.measured_at, second.reference.measured_at);
     assert_eq!(
         fixture
             .events()
@@ -119,7 +122,7 @@ fn comparison_preserves_observations_and_reuses_references_only_within_session()
     );
     let fresh_session = fixture.suite.begin().unwrap();
     let (fresh, _) = fixture.run(&fresh_session, no_artifacts()).unwrap();
-    assert_ne!(first.paper.id, fresh.paper.id);
+    assert_ne!(first.reference.id, fresh.reference.id);
     assert_eq!(
         fixture
             .events()
@@ -130,7 +133,7 @@ fn comparison_preserves_observations_and_reuses_references_only_within_session()
     );
     let recorded: McmOutput =
         serde_json::from_str(&serde_json::to_string(&first).unwrap()).unwrap();
-    assert_eq!(recorded.paper.id, first.paper.id);
+    assert_eq!(recorded.reference.id, first.reference.id);
 }
 
 #[test]
@@ -140,7 +143,7 @@ fn metric_hierarchy_keeps_namespaces_and_optional_values() {
     let session = fixture.suite.begin().unwrap();
     let (mut output, _) = fixture.run(&session, no_artifacts()).unwrap();
     let mut measurements = output.optimized.measurements().clone();
-    measurements.mcm.depth = None;
+    measurements.optimization.depth = None;
     output.optimized = OptimizedOutput::new(Duration::from_millis(12), measurements);
     let metrics = output.metrics();
     assert!(MetricDescriptor::group("output", McmOutput::list_metrics()).matches_value(&metrics));
@@ -153,7 +156,7 @@ fn metric_hierarchy_keeps_namespaces_and_optional_values() {
     let MetricValue::Group(measurements) = &optimized["measurements"] else {
         panic!("expected measurements group")
     };
-    let MetricValue::Group(mcm) = &measurements["mcm"] else {
+    let MetricValue::Group(mcm) = &measurements["optimization"] else {
         panic!("expected MCM group")
     };
     let MetricValue::Group(synthesis) = &measurements["synthesis"] else {
@@ -180,19 +183,19 @@ fn reference_key_includes_coefficients_width_seed_and_sample_index() {
     let (first, _) = fixture.run(&session, no_artifacts()).unwrap();
     fixture.suite.coefficient_sets = CoefficientSets::Explicit(vec![vec![-11, 3]]);
     let (reordered, _) = fixture.run(&session, no_artifacts()).unwrap();
-    assert_ne!(first.paper.id, reordered.paper.id);
+    assert_ne!(first.reference.id, reordered.reference.id);
     fixture.suite.options.paper_seed += 1;
     let (seed, _) = fixture.run(&session, no_artifacts()).unwrap();
-    assert_ne!(seed.paper.id, reordered.paper.id);
+    assert_ne!(seed.reference.id, reordered.reference.id);
     fixture.suite.input_width = 16;
     let (width, _) = fixture.run(&session, no_artifacts()).unwrap();
-    assert_ne!(width.paper.id, seed.paper.id);
+    assert_ne!(width.reference.id, seed.reference.id);
     let input = fixture.suite.inputs().unwrap().remove(0);
     let (sample, _) = fixture.run_sample(&session, no_artifacts(), 1).unwrap();
-    assert_ne!(sample.paper.id, width.paper.id);
+    assert_ne!(sample.reference.id, width.reference.id);
     assert_eq!(fixture.suite.inputs().unwrap()[0], input);
     let (cached, _) = fixture.run_sample(&session, no_artifacts(), 1).unwrap();
-    assert_eq!(cached.paper.id, sample.paper.id);
+    assert_eq!(cached.reference.id, sample.reference.id);
     tool(
         &fixture.suite.paper.executable,
         &format!("{PAPER}\n# changed binary\n"),

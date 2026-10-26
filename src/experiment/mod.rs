@@ -7,6 +7,7 @@ mod benchmark;
 mod context;
 mod error;
 mod provider;
+mod reference;
 mod result;
 mod suite;
 
@@ -15,6 +16,7 @@ pub(crate) use context::check_label;
 pub use context::{ArtifactPolicy, ProcessOutput, RunContext};
 pub use error::ExperimentError;
 pub use provider::{ToolProvider, YosysProvider};
+pub use reference::{Reference, ReferenceSession};
 pub use result::{Attempt, AttemptOutcome, AttemptRecord, RevisionFailure, RunReport};
 pub use suite::{CmpSuite, Suite, SuiteDefinition, Version};
 

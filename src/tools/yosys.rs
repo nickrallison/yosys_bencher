@@ -44,6 +44,23 @@ pub struct YosysJob {
 }
 
 impl YosysJob {
+    /// Start a job with hierarchy selection and parameter elaboration.
+    pub fn new(design: Design) -> Result<Self> {
+        let commands = hierarchy_commands(&design)?;
+        let mut job = Self {
+            design,
+            ..Self::default()
+        };
+        job.stage("hierarchy", commands)?;
+        Ok(job)
+    }
+
+    /// Capture both the stage log and a separate snapshot of RTL cell statistics.
+    pub fn stage_with_statistics(&mut self, name: &str, commands: Vec<String>) -> Result<()> {
+        self.stage(name, commands)?;
+        self.stage(&format!("{name}-stat"), vec!["stat -json".into()])
+    }
+
     pub fn stage(&mut self, name: &str, commands: Vec<String>) -> Result<()> {
         check_label(name)?;
         if commands.is_empty() || self.stages.iter().any(|stage| stage.name == name) {
@@ -268,7 +285,7 @@ impl YosysRunner {
             Ok(())
         })();
         context.record_diagnostic(label, retained);
-        let output = result?;
+        let output = result.map_err(command_error)?;
         for stage in &job.stages {
             if !directory.join(format!("{stage}.log")).is_file() {
                 return Err(ExperimentError::Parse(format!(
@@ -364,6 +381,22 @@ impl PreparedYosysJob {
         fs::create_dir_all(destination.join(".yosys-logs"))?;
         Ok(())
     }
+}
+
+fn command_error(error: ExperimentError) -> ExperimentError {
+    if let ExperimentError::Process { stdout, stderr, .. } = &error {
+        for bytes in [stdout, stderr] {
+            let text = String::from_utf8_lossy(bytes);
+            if let Some((_, rest)) = text.split_once("No such command:")
+                && let Some(name) = rest.split_whitespace().next()
+            {
+                return ExperimentError::Unsupported(format!(
+                    "this Yosys revision does not provide the {name} pass"
+                ));
+            }
+        }
+    }
+    error
 }
 
 fn stage_includes(directory: &Path, includes: &[(PathBuf, PathBuf)]) -> Result<()> {

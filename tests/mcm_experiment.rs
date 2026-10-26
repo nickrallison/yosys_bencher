@@ -112,16 +112,16 @@ fn experiment_builds_two_revisions_and_runs_composed_mcm_without_storage() {
             .all(|attempt| attempt["outcome"]["Success"].is_object())
     );
     assert_eq!(
-        attempts[0]["outcome"]["Success"]["paper"]["id"],
-        attempts[2]["outcome"]["Success"]["paper"]["id"]
+        attempts[0]["outcome"]["Success"]["reference"]["id"],
+        attempts[2]["outcome"]["Success"]["reference"]["id"]
     );
     assert_eq!(
-        attempts[1]["outcome"]["Success"]["paper"]["id"],
-        attempts[3]["outcome"]["Success"]["paper"]["id"]
+        attempts[1]["outcome"]["Success"]["reference"]["id"],
+        attempts[3]["outcome"]["Success"]["reference"]["id"]
     );
     assert_ne!(
-        attempts[0]["outcome"]["Success"]["paper"]["id"],
-        attempts[1]["outcome"]["Success"]["paper"]["id"]
+        attempts[0]["outcome"]["Success"]["reference"]["id"],
+        attempts[1]["outcome"]["Success"]["reference"]["id"]
     );
     assert_eq!(
         fs::read_to_string(root.path().join("paper.calls"))
