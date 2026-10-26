@@ -8,14 +8,10 @@
 // The sketch uses its own deprecated types until the real store replaces it.
 #![allow(deprecated)]
 
-use std::{
-    collections::HashMap,
-    fmt::Display,
-    time::{Duration, SystemTime},
-};
+use std::{collections::HashMap, fmt::Display};
 
 use crate::{
-    experiment::{BenchmarkIn, BenchmarkOut, ProcedureId, Version},
+    experiment::{AttemptRecord, BenchmarkIn, BenchmarkOut, ProcedureId, Version},
     src_manager::git::history::CommitId,
 };
 
@@ -103,7 +99,7 @@ impl<BMI, BMO> SuiteResults<BMI, BMO> {
 )]
 pub struct BenchmarkResults<BMI, BMO> {
     input: BMI,
-    attempts: Vec<BenchmarkAttempt<BMO>>,
+    attempts: Vec<AttemptRecord<BMO>>,
 }
 
 impl<BMI, BMO> BenchmarkResults<BMI, BMO> {
@@ -114,39 +110,9 @@ impl<BMI, BMO> BenchmarkResults<BMI, BMO> {
         }
     }
 
-    pub fn record(&mut self, attempt: BenchmarkAttempt<BMO>) {
+    pub fn record(&mut self, attempt: AttemptRecord<BMO>) {
         self.attempts.push(attempt);
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Getters)]
-#[getset(get = "pub")]
-#[deprecated(
-    note = "Temporary result model; its serialized layout is not a stable storage format."
-)]
-pub struct BenchmarkAttempt<BMO> {
-    start_time: SystemTime,
-    duration: Duration,
-    result: BenchmarkResult<BMO>,
-}
-
-impl<BMO> BenchmarkAttempt<BMO> {
-    pub fn new(start_time: SystemTime, duration: Duration, result: BenchmarkResult<BMO>) -> Self {
-        Self {
-            start_time,
-            duration,
-            result,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[deprecated(
-    note = "Temporary result model; its serialized layout is not a stable storage format."
-)]
-pub enum BenchmarkResult<BMO> {
-    Success(BMO),
-    Failure(String),
 }
 
 #[cfg(test)]

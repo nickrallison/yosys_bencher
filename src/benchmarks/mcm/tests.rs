@@ -341,7 +341,7 @@ fn signed_generation_and_paper_validation_match_v1() {
     let fixture = Fixture::new();
     let mut input = fixture.suite.inputs().unwrap().remove(0);
     input.coefficients = vec![3, -11, i32::MAX as i64, -i32::MAX as i64];
-    design::validate(&input).unwrap();
+    input.validate().unwrap();
     let source = design::verilog(&input).unwrap();
     for expression in [
         "x * (3'sd3)",
@@ -354,13 +354,13 @@ fn signed_generation_and_paper_validation_match_v1() {
     }
     input.coefficients = vec![0];
     assert!(matches!(
-        design::validate(&input),
+        input.validate(),
         Err(ExperimentError::Unsupported(_))
     ));
     input.coefficients = vec![i64::MAX];
-    assert!(design::validate(&input).is_err());
+    assert!(input.validate().is_err());
     input.coefficients.clear();
-    assert!(design::validate(&input).is_err());
+    assert!(input.validate().is_err());
 }
 
 #[test]

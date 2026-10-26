@@ -1,49 +1,16 @@
 use super::McmInput;
-use crate::experiment::ExperimentError;
+use crate::{
+    experiment::ExperimentError,
+    tools::yosys::design::{Design, SourceFile},
+};
 type Result<T> = std::result::Result<T, ExperimentError>;
 
-pub(super) fn validate(benchmark: &McmInput) -> Result<()> {
-    let invalid = |message: &str| ExperimentError::Config(message.into());
-    if benchmark.coefficients.is_empty() {
-        return Err(invalid("coefficient set is empty"));
-    }
-    if benchmark.input_width == 0 || benchmark.input_width > i32::MAX as u32 - 33 {
-        return Err(invalid(
-            "input width is outside the supported signed Verilog range",
-        ));
-    }
-    if !(1..=30).contains(&benchmark.options.paper_bit_width) {
-        return Err(invalid("paper bit width must be between 1 and 30"));
-    }
-    if benchmark.options.paper_seed > i32::MAX as u64 {
-        return Err(invalid(
-            "paper seed exceeds its signed 32-bit command-line range",
-        ));
-    }
-    if benchmark.options.max_depth == 0
-        || benchmark.options.max_depth > i32::MAX as u32
-        || benchmark.options.search_budget == 0
-        || benchmark.options.search_budget > i64::MAX as u64
-    {
-        return Err(invalid(
-            "MCM depth and search budget must be positive signed integers",
-        ));
-    }
-    for &coefficient in &benchmark.coefficients {
-        if coefficient == 0 {
-            return Err(ExperimentError::Unsupported(
-                "the paper tool does not support zero coefficients".into(),
-            ));
-        }
-        if i32::try_from(coefficient).is_err()
-            || coefficient.unsigned_abs() >= (1u64 << (benchmark.options.paper_bit_width + 1))
-        {
-            return Err(invalid(
-                "coefficient exceeds the paper tool's integer/search range",
-            ));
-        }
-    }
-    Ok(())
+pub(super) fn build(input: &McmInput) -> Result<Design> {
+    Ok(Design {
+        files: vec![SourceFile::new("design.v", verilog(input)?)],
+        top: Some("unoptimized".into()),
+        ..Design::default()
+    })
 }
 
 pub(super) fn verilog(benchmark: &McmInput) -> Result<String> {

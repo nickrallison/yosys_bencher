@@ -403,13 +403,13 @@ fn experiment_keeps_attempt_order_continues_failures_and_refreshes_session_and_i
     assert_eq!(experiment.suite().sessions.get(), 1);
     for offset in [0, 3] {
         assert!(
-            matches!(&report.attempts[offset].outcome, AttemptOutcome::Success(out) if *out.runtime() == Duration::from_millis((offset + 1) as u64))
+            matches!(&report.attempts[offset].record.outcome, AttemptOutcome::Success(out) if *out.runtime() == Duration::from_millis((offset + 1) as u64))
         );
         assert!(
-            matches!(&report.attempts[offset + 1].outcome, AttemptOutcome::Failure(reason) if reason.contains("failed workload"))
+            matches!(&report.attempts[offset + 1].record.outcome, AttemptOutcome::Failure(reason) if reason.contains("failed workload"))
         );
         assert!(matches!(
-            &report.attempts[offset + 2].outcome,
+            &report.attempts[offset + 2].record.outcome,
             AttemptOutcome::Unsupported(_)
         ));
         assert_eq!(report.attempts[offset + 1].input_index, 1);
@@ -443,7 +443,7 @@ fn experiment_keeps_attempt_order_continues_failures_and_refreshes_session_and_i
     );
     assert_ne!(report.directory, next.directory);
     assert!(
-        matches!(&next.attempts[0].outcome, AttemptOutcome::Success(out) if *out.runtime() == Duration::from_millis(1))
+        matches!(&next.attempts[0].record.outcome, AttemptOutcome::Success(out) if *out.runtime() == Duration::from_millis(1))
     );
     assert!(next.attempts.iter().all(|attempt| {
         attempt
@@ -475,9 +475,18 @@ fn shared_sampling_retains_mixed_outcomes_and_does_not_change_identity() {
     let report = experiment.run(&mut provider, &options).unwrap();
     assert_eq!(report.attempts.len(), 6);
     for samples in report.attempts.chunks_exact(3) {
-        assert!(matches!(samples[0].outcome, AttemptOutcome::Success(_)));
-        assert!(matches!(samples[1].outcome, AttemptOutcome::Failure(_)));
-        assert!(matches!(samples[2].outcome, AttemptOutcome::Success(_)));
+        assert!(matches!(
+            samples[0].record.outcome,
+            AttemptOutcome::Success(_)
+        ));
+        assert!(matches!(
+            samples[1].record.outcome,
+            AttemptOutcome::Failure(_)
+        ));
+        assert!(matches!(
+            samples[2].record.outcome,
+            AttemptOutcome::Success(_)
+        ));
         assert_eq!(
             samples
                 .iter()
@@ -485,8 +494,8 @@ fn shared_sampling_retains_mixed_outcomes_and_does_not_change_identity() {
                 .collect::<Vec<_>>(),
             [0, 1, 2]
         );
-        assert_eq!(samples[2].diagnostics.len(), 1);
-        assert!(samples[2].diagnostics[0].contains("no stacks"));
+        assert_eq!(samples[2].record.diagnostics.len(), 1);
+        assert!(samples[2].record.diagnostics[0].contains("no stacks"));
     }
     options.repetitions = NonZeroU32::new(1).unwrap();
     let next = experiment.run(&mut provider, &options).unwrap();
@@ -543,7 +552,7 @@ fn build_failures_retain_previous_results_and_allow_later_revisions() {
         report
             .attempts
             .iter()
-            .all(|attempt| matches!(attempt.outcome, AttemptOutcome::Success(_)))
+            .all(|attempt| matches!(attempt.record.outcome, AttemptOutcome::Success(_)))
     );
     assert_eq!(report.revision_failures.len(), 1);
     assert!(

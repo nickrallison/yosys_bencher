@@ -78,6 +78,13 @@ impl YosysRun {
     pub fn statistics(&self, name: &str) -> Result<Statistics> {
         Statistics::parse(self.log(name)?)
     }
+
+    pub fn pass_time(&self, name: &str) -> Result<Duration> {
+        self.pass_timings
+            .get(name)
+            .copied()
+            .ok_or_else(|| ExperimentError::Parse(format!("missing Yosys pass timing {name}")))
+    }
 }
 
 #[derive(Debug)]

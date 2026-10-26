@@ -1,13 +1,12 @@
 //! MCM and baseline synthesis comparison with a paper reference.
 
 use crate::{
-    benchmarks::synth::{CellLibrary, SynthConfig, SynthFlow, SynthMeasurements, SynthOutput},
-    experiment::{BenchmarkIn, ExperimentError, Procedure, RunContext, Suite},
-    tools::yosys::{
-        Yosys, YosysJob, YosysRunner,
-        design::{Design, SourceFile},
-        hierarchy_commands,
+    benchmarks::{
+        synth::{CellLibrary, SynthConfig, SynthFlow, SynthMeasurements},
+        yosys::measure,
     },
+    experiment::{BenchmarkIn, ExperimentError, Procedure, RunContext, Suite},
+    tools::yosys::{Yosys, YosysJob, YosysRunner, design::Design, hierarchy_commands},
 };
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
@@ -54,6 +53,52 @@ pub struct McmInput {
 
 impl BenchmarkIn for McmInput {}
 
+impl McmInput {
+    pub fn validate(&self) -> Result<()> {
+        let invalid = |message: &str| ExperimentError::Config(message.into());
+        if self.coefficients.is_empty() {
+            return Err(invalid("coefficient set is empty"));
+        }
+        if self.input_width == 0 || self.input_width > i32::MAX as u32 - 33 {
+            return Err(invalid(
+                "input width is outside the supported signed Verilog range",
+            ));
+        }
+        if !(1..=30).contains(&self.options.paper_bit_width) {
+            return Err(invalid("paper bit width must be between 1 and 30"));
+        }
+        if self.options.paper_seed > i32::MAX as u64 {
+            return Err(invalid(
+                "paper seed exceeds its signed 32-bit command-line range",
+            ));
+        }
+        if self.options.max_depth == 0
+            || self.options.max_depth > i32::MAX as u32
+            || self.options.search_budget == 0
+            || self.options.search_budget > i64::MAX as u64
+        {
+            return Err(invalid(
+                "MCM depth and search budget must be positive signed integers",
+            ));
+        }
+        for &coefficient in &self.coefficients {
+            if coefficient == 0 {
+                return Err(ExperimentError::Unsupported(
+                    "the paper tool does not support zero coefficients".into(),
+                ));
+            }
+            if i32::try_from(coefficient).is_err()
+                || coefficient.unsigned_abs() >= (1u64 << (self.options.paper_bit_width + 1))
+            {
+                return Err(invalid(
+                    "coefficient exceeds the paper tool's integer/search range",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 pub struct McmTools {
     pub yosys: Yosys,
     pub paper: Rc<PaperSession>,
@@ -76,52 +121,28 @@ impl Procedure for McmProcedure {
         tools: &McmTools,
         context: &mut RunContext,
     ) -> Result<McmOutput> {
-        design::validate(input)?;
+        input.validate()?;
         tools.paper.validate_identity(&input.paper_identity)?;
-        let design = Design {
-            files: vec![SourceFile::new("design.v", design::verilog(input)?)],
-            top: Some("unoptimized".into()),
-            ..Design::default()
-        };
-        let mcm = format!(
-            "mcm -depth {} -search_budget {}",
-            input.options.max_depth, input.options.search_budget
-        );
+        let design = design::build(input)?;
         let runner = YosysRunner::new(&tools.yosys)?;
         let baseline = runner.prepare(&SynthFlow::job(&design, &input.synthesis)?, context)?;
-        let mut optimized_job = YosysJob {
-            design,
-            timings: true,
-            ..YosysJob::default()
-        };
-        optimized_job.stage("hierarchy", hierarchy_commands(&optimized_job.design)?)?;
-        optimized_job.stage("mcm", vec![mcm])?;
-        optimized_job.stage("mcm-stat", vec!["stat -json".into()])?;
-        SynthFlow::append(&mut optimized_job, &input.synthesis)?;
-        let optimized = runner.prepare(&optimized_job, context)?;
-        let output = runner
-            .measure(&optimized, "optimized", context)
-            .map_err(mcm_error)?;
-        let cpu_time = output
-            .pass_timings
-            .get("mcm")
-            .copied()
-            .ok_or_else(|| ExperimentError::Parse("missing MCM pass timing".into()))?;
-        let optimized_output = OptimizedOutput::new(
-            output.process.elapsed,
-            OptimizedMeasurements {
-                mcm: McmMeasurements::parse(
-                    output.log("mcm")?,
-                    &output.statistics("mcm-stat")?,
-                    cpu_time,
-                )?,
-                synthesis: SynthMeasurements::parse(&output)?,
-            },
-        );
+        let optimized = runner.prepare(&optimized_job(input, design)?, context)?;
+        let optimized_output = measure(
+            &runner,
+            &optimized,
+            "optimized",
+            context,
+            OptimizedMeasurements::parse,
+        )
+        .map_err(mcm_error)?;
         let paper = tools.paper.reference(input, context)?;
-        let output = runner.measure(&baseline, "baseline", context)?;
-        let baseline_output =
-            SynthOutput::new(output.process.elapsed, SynthMeasurements::parse(&output)?);
+        let baseline_output = measure(
+            &runner,
+            &baseline,
+            "baseline",
+            context,
+            SynthMeasurements::parse,
+        )?;
         for (phase, job) in [("baseline", &baseline), ("optimized", &optimized)] {
             runner.diagnose(job, phase, context);
         }
@@ -131,6 +152,25 @@ impl Procedure for McmProcedure {
             optimized: optimized_output,
         })
     }
+}
+
+fn optimized_job(input: &McmInput, design: Design) -> Result<YosysJob> {
+    let mut job = YosysJob {
+        design,
+        timings: true,
+        ..YosysJob::default()
+    };
+    job.stage("hierarchy", hierarchy_commands(&job.design)?)?;
+    job.stage(
+        "mcm",
+        vec![format!(
+            "mcm -depth {} -search_budget {}",
+            input.options.max_depth, input.options.search_budget
+        )],
+    )?;
+    job.stage("mcm-stat", vec!["stat -json".into()])?;
+    SynthFlow::append(&mut job, &input.synthesis)?;
+    Ok(job)
 }
 
 fn mcm_error(error: ExperimentError) -> ExperimentError {

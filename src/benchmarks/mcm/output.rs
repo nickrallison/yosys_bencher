@@ -1,5 +1,9 @@
 use super::PaperReference;
-use crate::benchmarks::synth::{SynthMeasurements, SynthOutput, YosysBenchmarkOutput};
+use crate::{
+    benchmarks::synth::{SynthMeasurements, SynthOutput, YosysBenchmarkOutput},
+    experiment::ExperimentError,
+    tools::yosys::YosysRun,
+};
 use serde::{Deserialize, Serialize};
 
 mod mcm;
@@ -22,6 +26,19 @@ pub type OptimizedOutput = YosysBenchmarkOutput<OptimizedMeasurements>;
 pub struct OptimizedMeasurements {
     pub mcm: McmMeasurements,
     pub synthesis: SynthMeasurements,
+}
+
+impl OptimizedMeasurements {
+    pub fn parse(run: &YosysRun) -> Result<Self, ExperimentError> {
+        Ok(Self {
+            mcm: McmMeasurements::parse(
+                run.log("mcm")?,
+                &run.statistics("mcm-stat")?,
+                run.pass_time("mcm")?,
+            )?,
+            synthesis: SynthMeasurements::parse(run)?,
+        })
+    }
 }
 
 crate::benchmark_metrics! {

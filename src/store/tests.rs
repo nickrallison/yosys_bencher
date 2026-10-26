@@ -1,9 +1,11 @@
+use std::time::{Duration, SystemTime};
+
 use crate::{
     benchmarks::synth::{
         TimingConfig, TimingInput, TimingOutput,
         design::{Design, SourceFile},
     },
-    experiment::{BenchmarkIn, BenchmarkOut},
+    experiment::{AttemptOutcome, BenchmarkIn, BenchmarkOut},
 };
 
 use super::*;
@@ -25,22 +27,25 @@ fn storage_preserves_varying_outputs_failures_and_revision_boundaries() {
     );
     let mut first = BenchmarkResults::new(input.clone());
     for outcome in [
-        BenchmarkResult::Success(TimingOutput::new(Duration::from_millis(1), ())),
-        BenchmarkResult::Failure("intermittent failure".into()),
-        BenchmarkResult::Success(TimingOutput::new(Duration::from_millis(3), ())),
+        AttemptOutcome::Success(TimingOutput::new(Duration::from_millis(1), ())),
+        AttemptOutcome::Failure("intermittent failure".into()),
+        AttemptOutcome::Success(TimingOutput::new(Duration::from_millis(3), ())),
+        AttemptOutcome::Unsupported("missing pass".into()),
     ] {
-        first.record(BenchmarkAttempt::new(
-            SystemTime::UNIX_EPOCH,
-            Duration::from_secs(1),
+        first.record(AttemptRecord {
+            started_at: SystemTime::UNIX_EPOCH,
+            duration: Duration::from_secs(1),
             outcome,
-        ));
+            diagnostics: vec!["profiling unavailable".into()],
+        });
     }
     let mut second = BenchmarkResults::new(input.clone());
-    second.record(BenchmarkAttempt::new(
-        SystemTime::UNIX_EPOCH,
-        Duration::from_secs(1),
-        BenchmarkResult::Success(TimingOutput::new(Duration::from_millis(9), ())),
-    ));
+    second.record(AttemptRecord {
+        started_at: SystemTime::UNIX_EPOCH,
+        duration: Duration::from_secs(1),
+        outcome: AttemptOutcome::Success(TimingOutput::new(Duration::from_millis(9), ())),
+        diagnostics: Vec::new(),
+    });
     let version = Version::new(1, 4);
     let procedure = ProcedureId::new("synth.timing", version);
     let first_commit = CommitId::new("first".into());
@@ -66,23 +71,28 @@ fn storage_preserves_varying_outputs_failures_and_revision_boundaries() {
     assert_eq!(first.version(), &version);
     assert_eq!(first.benchmarks()[0].input(), &input);
     let attempts = first.benchmarks()[0].attempts();
-    assert_eq!(attempts.len(), 3);
-    assert_eq!(attempts[0].duration(), &Duration::from_secs(1));
+    assert_eq!(attempts.len(), 4);
+    assert_eq!(attempts[0].started_at, SystemTime::UNIX_EPOCH);
+    assert_eq!(attempts[0].diagnostics, ["profiling unavailable"]);
     assert!(
-        matches!(attempts[0].result(), BenchmarkResult::Success(out) if *out.runtime() == Duration::from_millis(1))
+        matches!(&attempts[3].outcome, AttemptOutcome::Unsupported(reason) if reason == "missing pass")
+    );
+    assert_eq!(attempts[0].duration, Duration::from_secs(1));
+    assert!(
+        matches!(&attempts[0].outcome, AttemptOutcome::Success(out) if *out.runtime() == Duration::from_millis(1))
     );
     assert!(
-        matches!(attempts[1].result(), BenchmarkResult::Failure(reason) if reason == "intermittent failure")
+        matches!(&attempts[1].outcome, AttemptOutcome::Failure(reason) if reason == "intermittent failure")
     );
     assert!(
-        matches!(attempts[2].result(), BenchmarkResult::Success(out) if *out.runtime() == Duration::from_millis(3))
+        matches!(&attempts[2].outcome, AttemptOutcome::Success(out) if *out.runtime() == Duration::from_millis(3))
     );
 
     let second: SuiteResults<TimingInput, TimingOutput> =
         store.get_results(id, second_commit).unwrap();
     assert_eq!(second.benchmarks()[0].attempts().len(), 1);
     assert!(
-        matches!(second.benchmarks()[0].attempts()[0].result(), BenchmarkResult::Success(out) if *out.runtime() == Duration::from_millis(9))
+        matches!(&second.benchmarks()[0].attempts()[0].outcome, AttemptOutcome::Success(out) if *out.runtime() == Duration::from_millis(9))
     );
 }
 

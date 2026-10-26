@@ -1,13 +1,26 @@
 use crate::{
     experiment::{BenchmarkIn, BenchmarkOut, ExperimentError, Procedure, RunContext},
     metrics::{MetricDescriptor, MetricType, MetricValue},
-    tools::yosys::{Yosys, YosysJob, YosysRun, YosysRunner, design},
+    tools::yosys::{PreparedYosysJob, Yosys, YosysJob, YosysRun, YosysRunner, design},
 };
 use contracts::contract_trait;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{hash::Hash, time::Duration};
 
 type Result<T> = std::result::Result<T, ExperimentError>;
+
+/// Measure and parse one prepared job. Coordinators schedule diagnostics separately.
+pub fn measure<M>(
+    runner: &YosysRunner,
+    job: &PreparedYosysJob,
+    label: &str,
+    context: &mut RunContext,
+    parse: impl FnOnce(&YosysRun) -> Result<M>,
+) -> Result<YosysBenchmarkOutput<M>> {
+    let run = runner.measure(job, label, context)?;
+    let measurements = parse(&run)?;
+    Ok(YosysBenchmarkOutput::new(run.process.elapsed, measurements))
+}
 
 pub trait YosysProcedure {
     type Config: BenchmarkIn;
@@ -49,13 +62,11 @@ impl<P: YosysProcedure> Procedure for YosysBenchmark<P> {
     ) -> Result<Self::Output> {
         let runner = YosysRunner::new(yosys)?;
         let job = runner.prepare(&self.procedure.job(input)?, context)?;
-        let output = runner.measure(&job, "yosys", context)?;
-        let measurements = self.procedure.parse(input, &output)?;
+        let output = measure(&runner, &job, "yosys", context, |run| {
+            self.procedure.parse(input, run)
+        })?;
         runner.diagnose(&job, "yosys", context);
-        Ok(YosysBenchmarkOutput::new(
-            output.process.elapsed,
-            measurements,
-        ))
+        Ok(output)
     }
 }
 

@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         || report
             .attempts
             .iter()
-            .any(|attempt| !matches!(attempt.outcome, AttemptOutcome::Success(_)))
+            .any(|attempt| !matches!(attempt.record.outcome, AttemptOutcome::Success(_)))
     {
         return Err("some MCM attempts failed or were unsupported; see results.json".into());
     }
