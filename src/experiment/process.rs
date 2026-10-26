@@ -123,60 +123,61 @@ mod tests {
     use crate::{
         experiment::{ArtifactPolicy, RunContext},
         test_support::output,
+        tools::perf::PerfAvailability,
     };
-    use std::{cell::RefCell, collections::VecDeque, path::PathBuf, rc::Rc};
+    use std::{cell::RefCell, collections::VecDeque};
 
     #[derive(Debug)]
-    struct RecordedExecutor {
-        responses: RefCell<VecDeque<ProcessCapture>>,
-        commands: Rc<RefCell<Vec<String>>>,
-    }
-
-    impl ProcessExecutor for RecordedExecutor {
+    struct Replay(RefCell<VecDeque<ProcessCapture>>);
+    impl ProcessExecutor for Replay {
         fn execute(
             &self,
             command: &mut Command,
-            _: &Path,
-            _: Option<&PreparedPerfStat>,
+            workspace: &Path,
+            perf: Option<&PreparedPerfStat>,
         ) -> Result<ProcessCapture, ExperimentError> {
-            self.commands.borrow_mut().push(format!("{command:?}"));
-            Ok(self.responses.borrow_mut().pop_front().unwrap())
+            assert_eq!(command.get_program(), "tool");
+            assert_eq!(workspace, Path::new("unused"));
+            assert!(perf.is_none());
+            Ok(self
+                .0
+                .borrow_mut()
+                .pop_front()
+                .expect("unexpected execution"))
         }
     }
 
     #[test]
-    fn process_results_and_diagnostics_can_be_replayed_in_memory() {
-        let commands = Rc::new(RefCell::new(Vec::new()));
-        let captured = |code, perf| ProcessCapture {
+    fn context_preserves_process_results_and_treats_optional_instrumentation_as_diagnostics() {
+        let captures = [0, 7].map(|code| ProcessCapture {
             command: "tool".into(),
             output: output(code, b"stdout", b"stderr"),
             elapsed: Duration::from_millis(3),
-            perf,
-            diagnostics: Vec::new(),
-        };
-        let executor = RecordedExecutor {
-            responses: RefCell::new(VecDeque::from([
-                captured(0, Some(b"malformed perf report".to_vec())),
-                captured(7, None),
-            ])),
-            commands: Rc::clone(&commands),
-        };
-        let mut context = RunContext::new(
-            PathBuf::from("unused-workspace"),
-            ArtifactPolicy::new(false, false, false),
-        )
-        .with_executor(executor);
+            perf: (code == 0).then(|| b"malformed perf report".to_vec()),
+            diagnostics: vec![],
+        });
+        let mut context =
+            RunContext::new("unused".into(), ArtifactPolicy::new(false, false, false))
+                .with_executor(Replay(RefCell::new(captures.into())))
+                .with_perf_counters(PerfAvailability::Unavailable("unavailable".into()));
         let result = context
-            .run_process("success", &mut Command::new("first"))
+            .run_process("success", &mut Command::new("tool"))
             .unwrap();
         assert_eq!(result.stdout().unwrap(), "stdout");
+        assert_eq!(result.output.stderr, b"stderr");
         assert_eq!(result.elapsed, Duration::from_millis(3));
         assert!(result.perf.is_none());
-        assert_eq!(context.diagnostics().len(), 1);
+        assert_eq!(context.diagnostics().len(), 2);
+        assert!(context.diagnostics()[0].contains("unavailable"));
+        assert!(context.diagnostics()[1].contains("perf counters"));
+        let error = context
+            .run_process("failure", &mut Command::new("tool"))
+            .unwrap_err();
         assert!(
-            matches!(context.run_process("failure", &mut Command::new("second")), Err(ExperimentError::Process { status, detail, .. }) if status.code() == Some(7) && detail == "stderr")
+            matches!(error, ExperimentError::Process { status, detail, stdout, stderr, .. }
+            if status.code() == Some(7) && detail == "stderr" && stdout == b"stdout" && stderr == b"stderr")
         );
-        assert_eq!(commands.borrow().len(), 2);
         assert_eq!(*context.processes(), 2);
+        assert_eq!(context.diagnostics().len(), 2);
     }
 }

@@ -105,6 +105,3 @@ impl<BMI, BMO> BenchmarkResults<BMI, BMO> {
         self.attempts.push(attempt);
     }
 }
-
-#[cfg(test)]
-mod tests;

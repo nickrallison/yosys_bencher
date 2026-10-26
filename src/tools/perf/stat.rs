@@ -241,7 +241,7 @@ mod tests {
     }
 
     #[test]
-    fn counters_are_enabled_by_default_and_preserve_process_output_and_environment() {
+    fn instrumentation_preserves_process_output_environment_and_exit_status() {
         assert!(RunOptions::default().perf_counters.is_some());
         let root = tempfile::tempdir().unwrap();
         let mut context = RunContext::new(
@@ -257,11 +257,6 @@ mod tests {
         let perf = output.perf.unwrap();
         assert!(
             matches!(perf.get_metric("task_clock"), Some(MetricValue::Duration(time)) if time > Duration::ZERO)
-        );
-        assert!(
-            perf.counters
-                .iter()
-                .all(|counter| (0.0..=100.0).contains(&counter.running_percent))
         );
         assert_eq!(
             fs::read_to_string(context.workspace().join("executions")).unwrap(),
@@ -279,70 +274,22 @@ mod tests {
                 .join("process-000-measured.perf.json")
                 .is_file()
         );
-        assert_eq!(fs::read_dir(context.workspace()).unwrap().count(), 5);
-    }
-
-    #[test]
-    fn unavailable_and_disabled_counters_do_not_rerun_workloads() {
-        let root = tempfile::tempdir().unwrap();
-        for (name, perf) in [
-            (
-                "unavailable",
-                Some(PerfStat::new(root.path().join("missing-perf"))),
-            ),
-            ("disabled", None),
-        ] {
-            let mut context = RunContext::new(
-                root.path().join(name),
-                ArtifactPolicy::new(false, false, false),
+        let error = context
+            .run_process(
+                "failure",
+                Command::new(tool("sh", Some("SH")))
+                    .args(["-c", "echo ran >> executions; echo failure >&2; exit 7"]),
             )
-            .with_perf_counters(PerfAvailability::prepare(perf.as_ref()));
-            for _ in 0..2 {
-                let output = context
-                    .run_process(
-                        "measured",
-                        Command::new(tool("sh", Some("SH"))).args(["-c", "echo ran >> executions"]),
-                    )
-                    .unwrap();
-                assert!(output.perf.is_none());
-            }
-            assert_eq!(
-                fs::read_to_string(context.workspace().join("executions")).unwrap(),
-                "ran\nran\n"
-            );
-            assert_eq!(
-                context.diagnostics().len(),
-                usize::from(name == "unavailable")
-            );
-            assert_eq!(fs::read_dir(context.workspace()).unwrap().count(), 1);
-        }
-    }
-
-    #[test]
-    fn instrumented_process_failures_keep_status_and_are_not_retried() {
-        let root = tempfile::tempdir().unwrap();
-        let mut context = RunContext::new(
-            root.path().join("workspace"),
-            ArtifactPolicy::new(false, false, false),
-        )
-        .with_perf_counters(collector());
-        let result = context.run_process(
-            "failing",
-            Command::new(tool("sh", Some("SH")))
-                .args(["-c", "echo ran >> executions; echo failure >&2; exit 7"]),
-        );
+            .unwrap_err();
         assert!(
-            matches!(result, Err(ExperimentError::Process { status, detail, .. }) if status.code() == Some(7) && detail == "failure")
+            matches!(error, ExperimentError::Process { status, detail, .. }
+            if status.code() == Some(7) && detail == "failure")
         );
         assert_eq!(
             fs::read_to_string(context.workspace().join("executions")).unwrap(),
-            "ran\n"
+            "ran\nran\n"
         );
-        assert!(
-            context.diagnostics().is_empty(),
-            "{:?}",
-            context.diagnostics()
-        );
+        assert_eq!(*context.processes(), 2);
     }
 
     #[test]

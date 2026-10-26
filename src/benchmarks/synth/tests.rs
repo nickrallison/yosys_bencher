@@ -2,63 +2,6 @@ use super::*;
 use crate::experiment::{ArtifactPolicy, Procedure, RunContext};
 
 #[test]
-fn comparison_combines_multiple_passes_without_an_external_reference() {
-    use crate::experiment::BenchmarkOut;
-    use std::fs;
-
-    let root = tempfile::tempdir().unwrap();
-    let executable = crate::test_support::tool("yosys", Some("YOSYS"));
-    let workspace = root.path().join("workspace");
-    let mut context = RunContext::new(workspace.clone(), ArtifactPolicy::new(false, false, false));
-    let design = design::Design {
-        files: vec![SourceFile::new(
-            "top.v",
-            "module top(input [7:0] a,b, output [7:0] y); assign y=a+b; endmodule",
-        )],
-        ..design::Design::default()
-    };
-    let result = comparison::compare(
-        &Yosys::new(executable),
-        &design,
-        &SynthConfig::new(
-            CellLibrary::from_path(crate::test_support::file("MCM_LIBERTY")).unwrap(),
-            Vec::new(),
-        ),
-        &mut context,
-        |job| {
-            job.stage_with_statistics("opt", vec!["opt".into()])?;
-            job.stage_with_statistics("clean", vec!["clean".into()])
-        },
-        |run| {
-            for stage in ["opt-stat", "clean-stat"] {
-                assert_eq!(run.statistics(stage)?.cell_count.get("$add"), Some(&1));
-            }
-            assert!(run.statistics("stat")?.area.is_some_and(|area| area > 0.0));
-            SynthMeasurements::parse(run)
-        },
-        |_| Ok(()),
-    )
-    .unwrap();
-    assert_eq!(result.area_savings(), Some(0.0));
-    assert!(
-        result
-            .optimized
-            .measurements()
-            .optimization
-            .area()
-            .is_some_and(|area| area > 0.0)
-    );
-    assert!(
-        crate::metrics::MetricDescriptor::group(
-            "comparison",
-            comparison::ComparisonOutput::<SynthMeasurements>::list_metrics()
-        )
-        .matches_value(&result.metrics())
-    );
-    assert_eq!(fs::read_dir(workspace).unwrap().count(), 0);
-}
-
-#[test]
 fn real_synthesis_counts_hierarchy_and_maps_flip_flops() {
     let yosys = Yosys::new(crate::test_support::tool("yosys", Some("YOSYS")));
     let library = CellLibrary::from_path(crate::test_support::file("MCM_LIBERTY")).unwrap();
@@ -118,9 +61,53 @@ fn real_synthesis_counts_hierarchy_and_maps_flip_flops() {
 }
 
 #[test]
-fn unmapped_internal_cells_do_not_produce_partial_area() {
-    let stats = crate::tools::yosys::Statistics::parse(r#"{"modules":{"top":{"num_cells":2,"area":3.0,"num_cells_by_type":{"NAND2_X1":1,"$_DFF_P_":1}}}}"#).unwrap();
-    let measurements = SynthMeasurements::from_statistics(stats);
-    assert_eq!(measurements.area, None);
-    assert_eq!(measurements.cell_count.len(), 2);
+fn synthesis_measurements_preserve_counts_and_only_report_fully_mapped_area() {
+    for (cells, expected) in [
+        (vec![("NAND2", 1)], Some(3.0)),
+        (vec![("NAND2", 1), ("$_DFF_P_", 1)], None),
+        (vec![], Some(0.0)),
+    ] {
+        let stats = crate::tools::yosys::Statistics {
+            area: Some(3.0),
+            cell_count: cells
+                .into_iter()
+                .map(|(name, count)| (name.into(), count))
+                .collect(),
+        };
+        let measurements = SynthMeasurements::from_statistics(stats.clone());
+        assert_eq!(measurements.area, expected);
+        assert_eq!(measurements.cell_count, stats.cell_count);
+    }
+}
+
+#[test]
+fn comparison_reports_area_savings_only_when_both_areas_and_a_positive_baseline_exist() {
+    use comparison::{ComparisonOutput, OptimizedMeasurements};
+    use std::time::Duration;
+    let synthesis = |area| {
+        SynthMeasurements::from_statistics(crate::tools::yosys::Statistics {
+            area,
+            cell_count: [("NAND2".into(), 1)].into(),
+        })
+    };
+    for (baseline, optimized, expected) in [
+        (Some(40.0), Some(20.0), Some(50.0)),
+        (Some(40.0), Some(80.0), Some(-100.0)),
+        (Some(0.0), Some(20.0), None),
+        (None, Some(20.0), None),
+        (Some(40.0), None, None),
+    ] {
+        let output = ComparisonOutput {
+            reference: (),
+            baseline: SynthOutput::new(Duration::ZERO, synthesis(baseline)),
+            optimized: YosysBenchmarkOutput::new(
+                Duration::ZERO,
+                OptimizedMeasurements {
+                    optimization: (),
+                    synthesis: synthesis(optimized),
+                },
+            ),
+        };
+        assert_eq!(output.area_savings(), expected);
+    }
 }

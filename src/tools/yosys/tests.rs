@@ -133,53 +133,6 @@ fn materialization_writes_the_compiled_files_and_cleans_up() {
 }
 
 #[test]
-fn stage_logs_are_fresh_per_execution_and_failures_keep_partial_logs() {
-    let root = tempfile::tempdir().unwrap();
-    let runner = YosysRunner::new(&Yosys::new(crate::test_support::tool(
-        "yosys",
-        Some("YOSYS"),
-    )))
-    .unwrap();
-    let mut context = RunContext::new(
-        root.path().join("attempt"),
-        ArtifactPolicy::new(true, false, false),
-    );
-    let mut job = job();
-    job.stage("stage", vec!["log first".into()]).unwrap();
-    let prepared = runner.prepare(&job, &mut context).unwrap();
-    let script = prepared.directory.path().join("run.ys");
-    let first = runner.measure(&prepared, "first", &mut context).unwrap();
-    assert_eq!(first.log("stage").unwrap(), "first\n");
-
-    fs::write(
-        &script,
-        "tee -o .yosys-logs/stage.log log partial\nselect -assert-count 1 *\n",
-    )
-    .unwrap();
-    assert!(matches!(
-        runner.measure(&prepared, "failed", &mut context),
-        Err(ExperimentError::Process { .. })
-    ));
-    assert_eq!(
-        fs::read_to_string(context.workspace().join("logs/failed/stage.log")).unwrap(),
-        "partial\n"
-    );
-
-    fs::write(&script, "log no-stage-log\n").unwrap();
-    assert!(matches!(
-        runner.measure(&prepared, "missing", &mut context),
-        Err(ExperimentError::Parse(_))
-    ));
-    assert_eq!(first.log("stage").unwrap(), "first\n");
-
-    fs::write(&script, "custom_opt\n").unwrap();
-    assert!(matches!(
-        runner.measure(&prepared, "unsupported", &mut context),
-        Err(ExperimentError::Unsupported(reason)) if reason.contains("custom_opt")
-    ));
-}
-
-#[test]
 fn statistics_count_leaf_cells_across_the_whole_hierarchy() {
     let text = r#"{"modules":{"\\top":{"num_cells":0,"num_cells_by_type":{"child":2}},"\\child":{"num_cells":1,"num_cells_by_type":{"NAND2_X1":1}}},"design":{"num_cells":2,"area":84.588,"num_cells_by_type":{"child":2,"NAND2_X1":2}}}"#;
     let stats = Statistics::parse(text).unwrap();
@@ -202,7 +155,7 @@ fn statistics_count_leaf_cells_across_the_whole_hierarchy() {
 }
 
 #[test]
-fn real_frontend_handles_filelists_includes_defines_and_parameters() {
+fn runner_elaborates_the_design_and_keeps_execution_logs_fresh() {
     let root = tempfile::tempdir().unwrap();
     let mut context = RunContext::new(root.path().into(), ArtifactPolicy::default());
     let runner = YosysRunner::new(&Yosys::new(crate::test_support::tool(
@@ -246,4 +199,37 @@ fn real_frontend_handles_filelists_includes_defines_and_parameters() {
     assert!(rtl.contains("wire width 8 input"), "{rtl}");
     assert!(rtl.contains("wire width 8 output"), "{rtl}");
     result.statistics("stat").unwrap();
+    let script = prepared.directory.path().join("run.ys");
+    fs::write(
+        &script,
+        "tee -o .yosys-logs/frontend.log log partial\nselect -assert-count 1 *\n",
+    )
+    .unwrap();
+    assert!(matches!(
+        runner.measure(&prepared, "failed", &mut context),
+        Err(ExperimentError::Process { .. })
+    ));
+    assert_eq!(
+        fs::read_to_string(context.workspace().join("logs/failed/frontend.log")).unwrap(),
+        "partial\n"
+    );
+    fs::write(&script, "log no-stage-log\n").unwrap();
+    assert!(matches!(
+        runner.measure(&prepared, "missing", &mut context),
+        Err(ExperimentError::Parse(_))
+    ));
+    assert!(result.statistics("stat").is_ok());
+    fs::write(&script, "missing_custom_pass\n").unwrap();
+    assert!(
+        matches!(runner.measure(&prepared, "unsupported", &mut context),
+        Err(ExperimentError::Unsupported(reason)) if reason.contains("missing_custom_pass"))
+    );
+    drop(prepared);
+    assert!(!fs::read_dir(context.workspace()).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".job-")
+    }));
 }

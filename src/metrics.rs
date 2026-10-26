@@ -182,4 +182,40 @@ mod tests {
         assert!(!schema.matches_value(&MetricValue::Group(BTreeMap::new())));
         assert!(schema.matches_value(&MetricValue::Samples(Vec::new())));
     }
+
+    use crate::{
+        benchmarks::synth::{SynthMeasurements, SynthOutput},
+        experiment::BenchmarkOut,
+        tools::yosys::Statistics,
+    };
+
+    #[test]
+    fn benchmark_output_preserves_values_and_namespaces_and_omits_absent_metrics() {
+        let output = SynthOutput::new(
+            Duration::from_millis(12),
+            SynthMeasurements::from_statistics(Statistics {
+                area: None,
+                cell_count: [("NAND2".into(), 5)].into(),
+            }),
+        );
+        let expected = MetricValue::Group(BTreeMap::from([
+            (
+                "runtime".into(),
+                MetricValue::Duration(Duration::from_millis(12)),
+            ),
+            (
+                "measurements".into(),
+                MetricValue::Group(BTreeMap::from([(
+                    "cell_count".into(),
+                    MetricValue::UInt(5),
+                )])),
+            ),
+        ]));
+        assert_eq!(output.metrics(), expected);
+        assert!(
+            MetricDescriptor::group("output", SynthOutput::list_metrics()).matches_value(&expected)
+        );
+        assert_eq!(output.get_metric("perf"), None);
+        assert_eq!(output.get_metric("measurements.area"), None);
+    }
 }
