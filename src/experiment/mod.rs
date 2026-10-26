@@ -1,6 +1,9 @@
 use std::{fs, num::NonZeroU32, path::PathBuf};
 
-use crate::{src_manager::git::history::RevisionSelection, tools::perf::PerfProfiler};
+use crate::{
+    src_manager::git::history::RevisionSelection,
+    tools::perf::{PerfProfiler, PerfStat},
+};
 
 mod attempt;
 mod benchmark;
@@ -32,6 +35,8 @@ pub struct Experiment<S: Suite> {
 pub struct RunOptions {
     pub artifacts: ArtifactPolicy,
     pub perf: Option<PerfProfiler>,
+    /// Counters from each measured process. Enabled by default, optional when unavailable.
+    pub perf_counters: Option<PerfStat>,
     /// Independent attempts per input and revision, outside workload identity.
     pub repetitions: NonZeroU32,
 }
@@ -41,6 +46,7 @@ impl Default for RunOptions {
         Self {
             artifacts: ArtifactPolicy::default(),
             perf: None,
+            perf_counters: Some(PerfStat::default()),
             repetitions: NonZeroU32::new(1).unwrap(),
         }
     }

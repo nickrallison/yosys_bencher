@@ -8,12 +8,13 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use super::ExperimentError;
-use crate::tools::perf::PerfProfiler;
+use crate::tools::perf::{PerfMeasurements, PerfProfiler, PerfStat};
 
 #[derive(Debug)]
 pub struct ProcessOutput {
     pub output: Output,
     pub elapsed: Duration,
+    pub perf: Option<PerfMeasurements>,
 }
 
 impl ProcessOutput {
@@ -43,6 +44,7 @@ pub struct RunContext {
     workspace: PathBuf,
     artifacts: ArtifactPolicy,
     perf: Option<PerfProfiler>,
+    perf_counters: Option<PerfStat>,
     processes: usize,
     sample_index: u32,
     diagnostics: Vec<String>,
@@ -54,6 +56,7 @@ impl RunContext {
             workspace,
             artifacts,
             perf: None,
+            perf_counters: None,
             processes: 0,
             sample_index: 0,
             diagnostics: Vec::new(),
@@ -62,6 +65,12 @@ impl RunContext {
 
     pub fn with_perf(mut self, perf: PerfProfiler) -> Self {
         self.perf = Some(perf);
+        self
+    }
+
+    /// Experiment run options enable counters by default; standalone contexts opt in here.
+    pub fn with_perf_counters(mut self, perf: Option<PerfStat>) -> Self {
+        self.perf_counters = perf;
         self
     }
 
@@ -77,6 +86,7 @@ impl RunContext {
     }
 
     /// Only spawning, execution, and output collection contribute to elapsed time.
+    /// When enabled, wall time includes the perf stat wrapper's overhead.
     /// Logs are retained here; callers handle scripts, netlists, and perf diagnostics.
     pub fn run_process(
         &mut self,
@@ -88,24 +98,44 @@ impl RunContext {
         if command.get_current_dir().is_none() {
             command.current_dir(self.workspace.canonicalize()?);
         }
-        command.stdin(Stdio::null());
-        let description = format!("{command:?}");
+        let report = self.perf_report()?;
+        let mut wrapped = report
+            .as_ref()
+            .map(|(perf, file)| perf.command(command, file.path()));
+        let measured = wrapped.as_mut().unwrap_or(command);
+        measured.stdin(Stdio::null());
+        let description = format!("{measured:?}");
         let index = self.processes;
         self.processes += 1;
         let start = Instant::now();
-        let output = command
+        let output = measured
             .output()
             .map_err(|source| ExperimentError::CommandIo {
                 command: description.clone(),
                 source,
             })?;
         let elapsed = start.elapsed();
+        let perf = report.as_ref().and_then(|(_, file)| {
+            match fs::read_to_string(file.path())
+                .map_err(ExperimentError::from)
+                .and_then(|text| PerfMeasurements::parse(&text))
+            {
+                Ok(perf) => Some(perf),
+                Err(error) => {
+                    self.record_diagnostic("perf counters", Err(error));
+                    None
+                }
+            }
+        });
         if self.artifacts.logs {
             let prefix = self.workspace.join(format!("process-{index:03}-{label}"));
             let result = (|| -> Result<(), ExperimentError> {
                 fs::write(prefix.with_extension("stdout.log"), &output.stdout)?;
                 fs::write(prefix.with_extension("stderr.log"), &output.stderr)?;
                 fs::write(prefix.with_extension("command.log"), &description)?;
+                if let Some((_, file)) = &report {
+                    fs::copy(file.path(), prefix.with_extension("perf.json"))?;
+                }
                 Ok(())
             })();
             self.record_diagnostic(label, result);
@@ -127,7 +157,28 @@ impl RunContext {
                 stderr: output.stderr,
             });
         }
-        Ok(ProcessOutput { output, elapsed })
+        Ok(ProcessOutput {
+            output,
+            elapsed,
+            perf,
+        })
+    }
+
+    fn perf_report(
+        &mut self,
+    ) -> Result<Option<(PerfStat, tempfile::NamedTempFile)>, ExperimentError> {
+        let Some(perf) = self.perf_counters.clone() else {
+            return Ok(None);
+        };
+        if let Err(error) = perf.check() {
+            self.record_diagnostic("perf counters unavailable", Err(error));
+            self.perf_counters = None;
+            return Ok(None);
+        }
+        Ok(Some((
+            perf,
+            tempfile::NamedTempFile::new_in(&self.workspace)?,
+        )))
     }
 }
 

@@ -122,6 +122,7 @@ fn unmapped_internal_cells_do_not_produce_partial_area() {
     let process = ProcessOutput {
         output: Command::new("true").output().unwrap(),
         elapsed: Duration::ZERO,
+        perf: None,
     };
     let run = YosysRun {
         process,

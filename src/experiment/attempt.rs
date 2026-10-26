@@ -41,8 +41,9 @@ pub(super) fn run_attempt<P: Procedure>(
     sample_index: u32,
 ) -> Result<(AttemptRecord<P::Output>, Option<PathBuf>), ExperimentError> {
     let workspace = Workspace::new(directory, prefix, options.retains_artifacts())?;
-    let mut context =
-        RunContext::new(workspace.path.clone(), options.artifacts).with_sample_index(sample_index);
+    let mut context = RunContext::new(workspace.path.clone(), options.artifacts)
+        .with_sample_index(sample_index)
+        .with_perf_counters(options.perf_counters.clone());
     if let Some(perf) = &options.perf {
         context = context.with_perf(perf.clone());
     }

@@ -17,6 +17,7 @@ use yosys_bench::{
             history::{CommitId, RevisionSelection},
         },
     },
+    tools::perf::PerfStat,
 };
 
 fn run(command: &mut Command) -> Output {
@@ -72,6 +73,9 @@ fn experiment_builds_two_revisions_and_runs_composed_mcm_without_storage() {
     let library = root.path().join("cells.lib");
     fs::write(&library, "library(test) {}\n").unwrap();
     let output_dir = root.path().join("output");
+    let perf = root.path().join("perf");
+    fs::write(&perf, include_str!("fixtures/perf.sh")).unwrap();
+    fs::set_permissions(&perf, fs::Permissions::from_mode(0o755)).unwrap();
     let suite = McmSuite::new(
         CoefficientSets::Explicit(vec![vec![3, -11]]),
         CellLibrary::from_path(library).unwrap(),
@@ -97,6 +101,7 @@ fn experiment_builds_two_revisions_and_runs_composed_mcm_without_storage() {
             &RunOptions {
                 artifacts: ArtifactPolicy::new(false, false, false),
                 perf: None,
+                perf_counters: Some(PerfStat::new(&perf)),
                 repetitions: std::num::NonZeroU32::new(2).unwrap(),
             },
         )
@@ -110,6 +115,22 @@ fn experiment_builds_two_revisions_and_runs_composed_mcm_without_storage() {
         attempts
             .iter()
             .all(|attempt| attempt["outcome"]["Success"].is_object())
+    );
+    for attempt in attempts {
+        for phase in ["baseline", "optimized", "reference"] {
+            let counters = &attempt["outcome"]["Success"][phase]["perf"]["counters"];
+            assert_eq!(counters[1]["value"], 100.5);
+            assert_eq!(counters[1]["running_percent"], 50.0);
+            assert!(counters[3]["value"].is_null());
+        }
+    }
+    // One harmless availability probe, eight Yosys runs, and two paper samples.
+    assert_eq!(
+        fs::read_to_string(perf.with_extension("calls"))
+            .unwrap()
+            .lines()
+            .count(),
+        11
     );
     assert_eq!(
         attempts[0]["outcome"]["Success"]["reference"]["id"],

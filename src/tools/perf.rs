@@ -9,6 +9,9 @@ use serde::Serialize;
 
 use crate::experiment::ExperimentError;
 
+mod stat;
+pub use stat::{PerfCounter, PerfMeasurements, PerfStat};
+
 /// Tools for diagnostic recordings, kept separate from benchmark timing samples.
 #[derive(Debug, Clone, Serialize, Getters)]
 pub struct PerfProfiler {
@@ -79,16 +82,7 @@ impl PerfProfiler {
             .args(command.get_args())
             .current_dir(command.get_current_dir().unwrap_or(&directory))
             .stdin(Stdio::null());
-        for (key, value) in command.get_envs() {
-            match value {
-                Some(value) => {
-                    record.env(key, value);
-                }
-                None => {
-                    record.env_remove(key);
-                }
-            }
-        }
+        copy_environment(command, &mut record);
         stage(
             &mut record,
             &directory,
@@ -129,6 +123,19 @@ impl PerfProfiler {
             "flamegraph",
             &directory.join("flamegraph.svg"),
         )
+    }
+}
+
+fn copy_environment(source: &Command, target: &mut Command) {
+    for (key, value) in source.get_envs() {
+        match value {
+            Some(value) => {
+                target.env(key, value);
+            }
+            None => {
+                target.env_remove(key);
+            }
+        }
     }
 }
 

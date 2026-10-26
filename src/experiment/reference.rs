@@ -14,7 +14,10 @@ use serde::{Deserialize, Serialize};
 use super::{BenchmarkOut, ExperimentError, RunContext};
 use crate::{
     metrics::{MetricDescriptor, MetricValue},
-    tools::external::{ExecutableId, ExternalTool},
+    tools::{
+        external::{ExecutableId, ExternalTool},
+        perf::PerfMeasurements,
+    },
 };
 
 type Result<T> = std::result::Result<T, ExperimentError>;
@@ -28,16 +31,25 @@ pub struct Reference<M> {
     pub os: String,
     pub arch: String,
     pub measurements: M,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub perf: Option<PerfMeasurements>,
 }
 
 #[contract_trait]
 impl<M: BenchmarkOut> BenchmarkOut for Reference<M> {
     fn list_metrics() -> Vec<MetricDescriptor> {
-        vec![MetricDescriptor::group("measurements", M::list_metrics())]
+        vec![
+            MetricDescriptor::group("measurements", M::list_metrics()),
+            MetricDescriptor::group("perf", PerfMeasurements::list_metrics()),
+        ]
     }
 
     fn get_metric(&self, name: &str) -> Option<MetricValue> {
-        (name == "measurements").then(|| self.measurements.metrics())
+        match name {
+            "measurements" => Some(self.measurements.metrics()),
+            "perf" => self.perf.as_ref().map(BenchmarkOut::metrics),
+            _ => None,
+        }
     }
 }
 
@@ -85,7 +97,7 @@ impl<K: Eq + Hash, M: Clone> ReferenceSession<K, M> {
         identity: &ExecutableId,
         key: K,
         context: &mut RunContext,
-        run: impl FnOnce(&ExternalTool, &mut RunContext) -> Result<M>,
+        run: impl FnOnce(&ExternalTool, &mut RunContext) -> Result<(M, Option<PerfMeasurements>)>,
     ) -> Result<Reference<M>> {
         // Recheck even on cache hits: an edited executable invalidates the workload.
         self.validate_identity(identity)?;
@@ -94,7 +106,7 @@ impl<K: Eq + Hash, M: Clone> ReferenceSession<K, M> {
             return Ok(reference.clone());
         }
         let measured_at = SystemTime::now();
-        let measurements = run(&self.tool, context)?;
+        let (measurements, perf) = run(&self.tool, context)?;
         let mut references = self.references.borrow_mut();
         let reference = Reference {
             id: format!("{}:{}", self.scope, references.len()),
@@ -103,6 +115,7 @@ impl<K: Eq + Hash, M: Clone> ReferenceSession<K, M> {
             os: std::env::consts::OS.into(),
             arch: std::env::consts::ARCH.into(),
             measurements,
+            perf,
         };
         references.insert(key, reference.clone());
         Ok(reference)
@@ -134,7 +147,7 @@ mod tests {
             if calls.get() == 1 {
                 Err(ExperimentError::Parse("temporary failure".into()))
             } else {
-                Ok(calls.get())
+                Ok((calls.get(), None))
             }
         };
         assert!(

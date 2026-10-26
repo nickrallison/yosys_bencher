@@ -1,7 +1,10 @@
 use crate::{
     experiment::{BenchmarkIn, BenchmarkOut, ExperimentError, Procedure, RunContext},
     metrics::{MetricDescriptor, MetricType, MetricValue},
-    tools::yosys::{PreparedYosysJob, Yosys, YosysJob, YosysRun, YosysRunner, design},
+    tools::{
+        perf::PerfMeasurements,
+        yosys::{PreparedYosysJob, Yosys, YosysJob, YosysRun, YosysRunner, design},
+    },
 };
 use contracts::contract_trait;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -19,7 +22,7 @@ pub fn measure<M>(
 ) -> Result<YosysBenchmarkOutput<M>> {
     let run = runner.measure(job, label, context)?;
     let measurements = parse(&run)?;
-    Ok(YosysBenchmarkOutput::new(run.process.elapsed, measurements))
+    Ok(YosysBenchmarkOutput::new(run.process.elapsed, measurements).with_perf(run.process.perf))
 }
 
 pub trait YosysProcedure {
@@ -95,6 +98,9 @@ pub struct YosysBenchmarkOutput<M = ()> {
     runtime: Duration,
     #[get = "pub"]
     measurements: M,
+    #[get = "pub"]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    perf: Option<PerfMeasurements>,
 }
 
 impl<M> YosysBenchmarkOutput<M> {
@@ -102,7 +108,13 @@ impl<M> YosysBenchmarkOutput<M> {
         Self {
             runtime,
             measurements,
+            perf: None,
         }
+    }
+
+    pub fn with_perf(mut self, perf: Option<PerfMeasurements>) -> Self {
+        self.perf = perf;
+        self
     }
 
     fn runtime_descriptor() -> MetricDescriptor {
@@ -121,6 +133,10 @@ impl<M: BenchmarkOut> BenchmarkOut for YosysBenchmarkOutput<M> {
     fn list_metrics() -> Vec<MetricDescriptor> {
         let mut metrics = vec![YosysBenchmarkOutput::<M>::runtime_descriptor()];
         metrics.push(MetricDescriptor::group("measurements", M::list_metrics()));
+        metrics.push(MetricDescriptor::group(
+            "perf",
+            PerfMeasurements::list_metrics(),
+        ));
         metrics
     }
 
@@ -128,6 +144,7 @@ impl<M: BenchmarkOut> BenchmarkOut for YosysBenchmarkOutput<M> {
         match name {
             "runtime" => Some(MetricValue::Duration(self.runtime)),
             "measurements" => Some(self.measurements.metrics()),
+            "perf" => self.perf.as_ref().map(BenchmarkOut::metrics),
             _ => None,
         }
     }

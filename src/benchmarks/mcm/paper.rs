@@ -44,7 +44,7 @@ impl PaperSession {
                 command.args(input.coefficients.iter().map(ToString::to_string));
                 command.args(["-gc", "-seed", &input.options.paper_seed.to_string()]);
                 let output = context.run_process("paper", &mut command)?;
-                parse::paper(output.stdout()?, output.elapsed)
+                Ok((parse::paper(output.stdout()?, output.elapsed)?, output.perf))
             })
     }
 }
