@@ -1,30 +1,50 @@
 use super::*;
 use crate::{
-    experiment::{ArtifactPolicy, BenchmarkOut},
+    experiment::{
+        ArtifactPolicy, BenchmarkOut, OsProcessExecutor, ProcessCapture, ProcessExecutor,
+    },
     metrics::MetricValue,
+    test_support::{file, required, tool},
+    tools::perf::PreparedPerfStat,
 };
-use std::{fs, path::PathBuf, process::Command, time::Duration};
+use std::{
+    cell::RefCell,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+    time::Duration,
+};
 
-use crate::test_support::executable as tool;
+#[derive(Debug, Clone, Default)]
+struct Processes(Rc<RefCell<Vec<PathBuf>>>);
 
-const YOSYS: &str = include_str!("../../../tests/fixtures/yosys.sh");
-const PAPER: &str = include_str!("../../../tests/fixtures/paper.sh");
-struct Fixture {
+impl ProcessExecutor for Processes {
+    fn execute(
+        &self,
+        command: &mut Command,
+        workspace: &Path,
+        perf: Option<&PreparedPerfStat>,
+    ) -> Result<ProcessCapture> {
+        self.0.borrow_mut().push(command.get_program().into());
+        OsProcessExecutor.execute(command, workspace, perf)
+    }
+}
+
+struct McmTest {
     root: tempfile::TempDir,
     suite: McmSuite,
     yosys: Yosys,
+    processes: Processes,
 }
 
-impl Fixture {
+impl McmTest {
     fn new() -> Self {
         let root = tempfile::tempdir().unwrap();
-        let yosys = root.path().join("fake yosys");
-        let paper = root.path().join("fake paper");
-        tool(&yosys, YOSYS);
-        tool(&paper, PAPER);
+        let yosys = tool("yosys", Some("MCM_YOSYS"));
+        let paper = tool("acm", Some("MCM_PAPER"));
         let mut suite = McmSuite::new(
             CoefficientSets::Explicit(vec![vec![3, -11]]),
-            CellLibrary::new("library(test) {}"),
+            required(CellLibrary::from_path(file("MCM_LIBERTY"))),
             PaperTool { executable: paper },
         );
         suite.options.search_budget = 1000;
@@ -32,6 +52,7 @@ impl Fixture {
             root,
             suite,
             yosys: Yosys::new(yosys),
+            processes: Processes::default(),
         }
     }
 
@@ -50,8 +71,9 @@ impl Fixture {
         sample_index: u32,
     ) -> Result<(McmOutput, tempfile::TempDir)> {
         let workspace = tempfile::tempdir_in(self.root.path()).unwrap();
-        let mut context =
-            RunContext::new(workspace.path().into(), policy).with_sample_index(sample_index);
+        let mut context = RunContext::new(workspace.path().into(), policy)
+            .with_sample_index(sample_index)
+            .with_executor(self.processes.clone());
         let input = self.suite.inputs(session)?.remove(0);
         let output = McmProcedure.run(
             &input,
@@ -59,14 +81,6 @@ impl Fixture {
             &mut context,
         )?;
         Ok((output, workspace))
-    }
-
-    fn events(&self) -> Vec<String> {
-        fs::read_to_string(self.root.path().join("events"))
-            .unwrap()
-            .lines()
-            .map(str::to_owned)
-            .collect()
     }
 }
 
@@ -76,49 +90,67 @@ fn no_artifacts() -> ArtifactPolicy {
 
 #[test]
 fn comparison_preserves_observations_and_reuses_references_only_within_session() {
-    let fixture = Fixture::new();
-    let session = fixture.suite.begin().unwrap();
-    let (first, workspace) = fixture.run(&session, no_artifacts()).unwrap();
-    assert_eq!(*first.baseline.measurements().area(), Some(40.0));
-    assert_eq!(*first.optimized.measurements().synthesis.area(), Some(20.0));
-    assert_eq!(
-        first.get_metric("area_savings"),
-        Some(MetricValue::Float(50.0))
+    let test = McmTest::new();
+    let session = test.suite.begin().unwrap();
+    let (first, workspace) = test.run(&session, no_artifacts()).unwrap();
+    assert!(
+        first
+            .baseline
+            .measurements()
+            .area()
+            .is_some_and(|area| area > 0.0)
     );
+    assert!(
+        first
+            .optimized
+            .measurements()
+            .synthesis
+            .area()
+            .is_some_and(|area| area > 0.0)
+    );
+    assert!(first.area_savings().is_some());
     assert!(*first.optimized.runtime() > Duration::ZERO);
     let measurements = first.optimized.measurements();
-    assert_eq!(measurements.optimization.adds_subs, 1);
+    assert!(measurements.optimization.cpu_time > Duration::ZERO);
+    assert!(measurements.optimization.adds_subs > 0);
     assert_eq!(measurements.optimization.multipliers, 0);
-    assert_eq!(measurements.optimization.depth, Some(2));
-    assert_eq!(
-        measurements.optimization.cpu_time,
-        Duration::from_micros(2500)
+    assert!(
+        measurements
+            .optimization
+            .depth
+            .is_some_and(|depth| depth > 0)
     );
+    assert!(!measurements.synthesis.cell_count().is_empty());
     assert_eq!(
-        measurements.synthesis.cell_count().get("NAND2_X1"),
-        Some(&5)
+        *test.processes.0.borrow(),
+        [
+            test.yosys.path().clone(),
+            test.suite.paper.executable.clone(),
+            test.yosys.path().clone()
+        ]
     );
-    assert_eq!(fixture.events(), ["optimized", "paper", "baseline"]);
     assert_eq!(fs::read_dir(workspace.path()).unwrap().count(), 0);
-    let (second, _) = fixture.run(&session, no_artifacts()).unwrap();
+    let (second, _) = test.run(&session, no_artifacts()).unwrap();
     assert_eq!(first.reference.id, second.reference.id);
     assert_eq!(first.reference.measured_at, second.reference.measured_at);
     assert_eq!(
-        fixture
-            .events()
+        test.processes
+            .0
+            .borrow()
             .iter()
-            .filter(|phase| *phase == "paper")
+            .filter(|program| **program == test.suite.paper.executable)
             .count(),
         1
     );
-    let fresh_session = fixture.suite.begin().unwrap();
-    let (fresh, _) = fixture.run(&fresh_session, no_artifacts()).unwrap();
+    let fresh_session = test.suite.begin().unwrap();
+    let (fresh, _) = test.run(&fresh_session, no_artifacts()).unwrap();
     assert_eq!(fresh.reference.id, 0);
     assert_eq!(
-        fixture
-            .events()
+        test.processes
+            .0
+            .borrow()
             .iter()
-            .filter(|phase| *phase == "paper")
+            .filter(|program| **program == test.suite.paper.executable)
             .count(),
         2
     );
@@ -130,12 +162,49 @@ fn comparison_preserves_observations_and_reuses_references_only_within_session()
 #[test]
 fn metric_hierarchy_keeps_namespaces_and_optional_values() {
     use crate::metrics::MetricDescriptor;
-    let fixture = Fixture::new();
-    let session = fixture.suite.begin().unwrap();
-    let (mut output, _) = fixture.run(&session, no_artifacts()).unwrap();
-    let mut measurements = output.optimized.measurements().clone();
-    measurements.optimization.depth = None;
-    output.optimized = OptimizedOutput::new(Duration::from_millis(12), measurements);
+    use crate::{
+        benchmarks::synth::{SynthMeasurements, SynthOutput},
+        experiment::Reference,
+        tools::yosys::Statistics,
+    };
+    let synthesis = |area| {
+        SynthMeasurements::from_statistics(Statistics {
+            area: Some(area),
+            cell_count: [("NAND2_X1".into(), 5)].into(),
+        })
+    };
+    let output = McmOutput {
+        reference: Reference {
+            id: 0,
+            executable: PaperToolId::from_bytes(b"paper"),
+            measured_at: std::time::UNIX_EPOCH,
+            os: "linux".into(),
+            arch: "x86_64".into(),
+            measurements: PaperStats {
+                runtime: Duration::ZERO,
+                adds_subs: 1,
+                shifts: 2,
+                negations: 0,
+                multipliers: 0,
+                depth: 1,
+            },
+            perf: None,
+        },
+        baseline: SynthOutput::new(Duration::ZERO, synthesis(40.0)),
+        optimized: OptimizedOutput::new(
+            Duration::from_millis(12),
+            OptimizedMeasurements {
+                optimization: McmMeasurements {
+                    cpu_time: Duration::from_micros(2500),
+                    adds_subs: 1,
+                    negations: 0,
+                    multipliers: 0,
+                    depth: None,
+                },
+                synthesis: synthesis(20.0),
+            },
+        ),
+    };
     let metrics = output.metrics();
     assert!(MetricDescriptor::group("output", McmOutput::list_metrics()).matches_value(&metrics));
     let MetricValue::Group(root) = metrics else {
@@ -169,39 +238,45 @@ fn metric_hierarchy_keeps_namespaces_and_optional_values() {
 
 #[test]
 fn reference_key_includes_coefficients_width_seed_and_sample_index() {
-    let mut fixture = Fixture::new();
-    let session = fixture.suite.begin().unwrap();
-    let (first, _) = fixture.run(&session, no_artifacts()).unwrap();
-    fixture.suite.coefficient_sets = CoefficientSets::Explicit(vec![vec![-11, 3]]);
-    let (reordered, _) = fixture.run(&session, no_artifacts()).unwrap();
+    let mut test = McmTest::new();
+    let paper = test.root.path().join("paper");
+    fs::copy(&test.suite.paper.executable, &paper).unwrap();
+    test.suite.paper.executable = paper;
+    let session = test.suite.begin().unwrap();
+    let (first, _) = test.run(&session, no_artifacts()).unwrap();
+    test.suite.coefficient_sets = CoefficientSets::Explicit(vec![vec![-11, 3]]);
+    let (reordered, _) = test.run(&session, no_artifacts()).unwrap();
     assert_ne!(first.reference.id, reordered.reference.id);
-    fixture.suite.options.paper_seed += 1;
-    let (seed, _) = fixture.run(&session, no_artifacts()).unwrap();
+    test.suite.options.paper_seed += 1;
+    let (seed, _) = test.run(&session, no_artifacts()).unwrap();
     assert_ne!(seed.reference.id, reordered.reference.id);
-    fixture.suite.input_width = 16;
-    let (width, _) = fixture.run(&session, no_artifacts()).unwrap();
+    test.suite.input_width = 16;
+    let (width, _) = test.run(&session, no_artifacts()).unwrap();
     assert_ne!(width.reference.id, seed.reference.id);
-    let input = fixture.suite.inputs(&session).unwrap().remove(0);
-    let (sample, _) = fixture.run_sample(&session, no_artifacts(), 1).unwrap();
+    let input = test.suite.inputs(&session).unwrap().remove(0);
+    let (sample, _) = test.run_sample(&session, no_artifacts(), 1).unwrap();
     assert_ne!(sample.reference.id, width.reference.id);
-    assert_eq!(fixture.suite.inputs(&session).unwrap()[0], input);
-    let (cached, _) = fixture.run_sample(&session, no_artifacts(), 1).unwrap();
+    assert_eq!(test.suite.inputs(&session).unwrap()[0], input);
+    let (cached, _) = test.run_sample(&session, no_artifacts(), 1).unwrap();
     assert_eq!(cached.reference.id, sample.reference.id);
-    tool(
-        &fixture.suite.paper.executable,
-        &format!("{PAPER}\n# changed binary\n"),
-    );
+    use std::io::Write;
+    fs::OpenOptions::new()
+        .append(true)
+        .open(&test.suite.paper.executable)
+        .unwrap()
+        .write_all(b"changed binary")
+        .unwrap();
     assert!(matches!(
-        fixture.run(&session, no_artifacts()),
+        test.run(&session, no_artifacts()),
         Err(ExperimentError::Config(_))
     ));
 }
 
 #[test]
 fn retention_and_diagnostics_do_not_add_measurements() {
-    let fixture = Fixture::new();
-    let session = fixture.suite.begin().unwrap();
-    let (_, logs) = fixture
+    let test = McmTest::new();
+    let session = test.suite.begin().unwrap();
+    let (_, logs) = test
         .run(&session, ArtifactPolicy::new(true, false, false))
         .unwrap();
     assert_eq!(fs::read_dir(logs.path()).unwrap().count(), 10);
@@ -214,7 +289,7 @@ fn retention_and_diagnostics_do_not_add_measurements() {
             assert!(
                 fs::read_to_string(directory.join("mcm.log"))
                     .unwrap()
-                    .contains("depth 2")
+                    .contains("mcm:")
             );
             let stats = fs::read_to_string(directory.join("mcm-stat.log")).unwrap();
             assert!(stats.contains("$add"));
@@ -222,7 +297,7 @@ fn retention_and_diagnostics_do_not_add_measurements() {
             assert!(directory.join("timing.json").is_file());
         }
     }
-    let (_, scripts) = fixture
+    let (_, scripts) = test
         .run(&session, ArtifactPolicy::new(false, true, true))
         .unwrap();
     assert_eq!(
@@ -244,7 +319,7 @@ fn retention_and_diagnostics_do_not_add_measurements() {
                 .starts_with("inspect-")
         }));
     }
-    let (_, netlists) = fixture
+    let (_, netlists) = test
         .run(&session, ArtifactPolicy::new(false, false, true))
         .unwrap();
     for phase in ["baseline", "optimized"] {
@@ -256,78 +331,83 @@ fn retention_and_diagnostics_do_not_add_measurements() {
                 .is_file()
         );
     }
-    let events = fixture.events();
+    let processes = test.processes.0.borrow();
+    assert_eq!(processes.len(), 11);
     assert!(
-        events[events.len() - 2..]
+        processes[processes.len() - 2..]
             .iter()
-            .all(|phase| phase.ends_with("-diagnostic"))
+            .all(|program| program == test.yosys.path())
     );
     assert_eq!(fs::read_dir(netlists.path()).unwrap().count(), 1);
 }
 
 #[test]
 fn diagnostic_failures_preserve_successful_measurements() {
-    let fixture = Fixture::new();
-    fs::write(
-        format!("{}.fail-diagnostics", fixture.yosys.path().display()),
-        "",
-    )
-    .unwrap();
-    let session = fixture.suite.begin().unwrap();
-    let input = fixture.suite.inputs(&session).unwrap().remove(0);
-    let tools = fixture.suite.tools(&fixture.yosys, &session).unwrap();
+    let test = McmTest::new();
+    let session = test.suite.begin().unwrap();
+    let input = test.suite.inputs(&session).unwrap().remove(0);
+    let tools = test.suite.tools(&test.yosys, &session).unwrap();
     let workspace = tempfile::tempdir().unwrap();
+    fs::write(workspace.path().join("netlists"), "blocked").unwrap();
     let mut context = RunContext::new(
         workspace.path().into(),
         ArtifactPolicy::new(true, false, true),
     );
     let output = McmProcedure.run(&input, &tools, &mut context).unwrap();
-    assert_eq!(
-        *output.optimized.measurements().synthesis.area(),
-        Some(20.0)
-    );
+    assert!(output.optimized.measurements().synthesis.area().is_some());
     assert_eq!(context.diagnostics().len(), 2);
     assert!(
         context
             .diagnostics()
             .iter()
-            .all(|error| error.contains("deliberate-diagnostic-error"))
+            .all(|error| error.contains("netlist"))
     );
 }
 
 #[test]
 fn failed_and_unsupported_processes_preserve_diagnostics_and_clean_scratch() {
-    let fixture = Fixture::new();
-    let session = fixture.suite.begin().unwrap();
-    let input = fixture.suite.inputs(&session).unwrap().remove(0);
-    let tools = fixture.suite.tools(&fixture.yosys, &session).unwrap();
-    let workspace = tempfile::tempdir().unwrap();
-    let mut context = RunContext::new(
-        workspace.path().into(),
-        ArtifactPolicy::new(true, false, false),
-    );
-    tool(
-        fixture.yosys.path(),
-        "#!/bin/sh\necho deliberate-error >&2\nexit 9\n",
-    );
-    assert!(
-        matches!(McmProcedure.run(&input, &tools, &mut context), Err(ExperimentError::Process { detail, .. }) if detail.contains("deliberate-error"))
-    );
-    assert_eq!(fs::read_dir(workspace.path()).unwrap().count(), 3);
-    assert!(
-        workspace
-            .path()
-            .join("process-000-optimized.stderr.log")
-            .is_file()
-    );
-    tool(
-        fixture.yosys.path(),
-        "#!/bin/sh\necho 'ERROR: No such command: mcm' >&2\nexit 1\n",
-    );
-    assert!(matches!(
-        McmProcedure.run(&input, &tools, &mut context),
-        Err(ExperimentError::Unsupported(_))
-    ));
+    let test = McmTest::new();
+    let session = test.suite.begin().unwrap();
+    let mut input = test.suite.inputs(&session).unwrap().remove(0);
+    let tools = test.suite.tools(&test.yosys, &session).unwrap();
+    for (command, unsupported) in [
+        ("select -assert-count 0 *", false),
+        ("missing_custom_pass", true),
+    ] {
+        input.synthesis = crate::benchmarks::synth::SynthConfig::new(
+            test.suite.library.clone(),
+            vec![command.into()],
+        );
+        let workspace = tempfile::tempdir().unwrap();
+        let mut context = RunContext::new(
+            workspace.path().into(),
+            ArtifactPolicy::new(true, false, false),
+        );
+        let error = McmProcedure.run(&input, &tools, &mut context).unwrap_err();
+        if unsupported {
+            assert!(
+                matches!(error, ExperimentError::Unsupported(reason) if reason.contains(command))
+            );
+        } else {
+            assert!(
+                matches!(error, ExperimentError::Process { detail, .. } if detail.contains("Assertion failed"))
+            );
+        }
+        assert!(
+            workspace
+                .path()
+                .join("process-000-optimized.stderr.log")
+                .is_file()
+        );
+        assert!(workspace.path().join("logs/optimized/mcm.log").is_file());
+        assert!(!fs::read_dir(workspace.path()).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".job-")
+        }));
+    }
 }
 
 #[test]
@@ -391,20 +471,11 @@ fn paper_parser_requires_complete_statistics() {
 }
 
 #[test]
-#[ignore = "requires MCM_YOSYS, MCM_PAPER, and MCM_LIBERTY pointing to real tools"]
 fn real_comparison_and_signed_arithmetic() {
-    let yosys = PathBuf::from(std::env::var_os("MCM_YOSYS").expect("set MCM_YOSYS"));
-    let paper = PathBuf::from(std::env::var_os("MCM_PAPER").expect("set MCM_PAPER"));
-    let library = PathBuf::from(std::env::var_os("MCM_LIBERTY").expect("set MCM_LIBERTY"));
-    let mut suite = McmSuite::new(
-        CoefficientSets::Explicit(vec![vec![3, -11]]),
-        CellLibrary::from_path(library).unwrap(),
-        PaperTool { executable: paper },
-    );
-    suite.options.search_budget = 1000;
-    let session = suite.begin().unwrap();
-    let tools = suite.tools(&Yosys::new(&yosys), &session).unwrap();
-    let mut input = suite.inputs(&session).unwrap().remove(0);
+    let test = McmTest::new();
+    let session = test.suite.begin().unwrap();
+    let tools = test.suite.tools(&test.yosys, &session).unwrap();
+    let mut input = test.suite.inputs(&session).unwrap().remove(0);
     let workspace = tempfile::tempdir().unwrap();
     let mut context = RunContext::new(
         workspace.path().into(),
@@ -435,7 +506,7 @@ fn real_comparison_and_signed_arithmetic() {
             let bits = (i128::from(x) * i128::from(*coefficient)) & ((1i128 << width) - 1);
             script.push_str(&format!(" -prove y{index} {width}'h{bits:x}"));
         }
-        let output = Command::new(&yosys)
+        let output = Command::new(test.yosys.path())
             .current_dir(workspace.path())
             .args(["-Q", "-T", "-p", &script])
             .output()

@@ -4,26 +4,26 @@ use crate::experiment::{ArtifactPolicy, Procedure, RunContext};
 #[test]
 fn comparison_combines_multiple_passes_without_an_external_reference() {
     use crate::experiment::BenchmarkOut;
-    use std::{fs, os::unix::fs::PermissionsExt};
+    use std::fs;
 
     let root = tempfile::tempdir().unwrap();
-    let executable = root.path().join("yosys");
-    fs::write(
-        &executable,
-        include_str!("../../../tests/fixtures/yosys.sh"),
-    )
-    .unwrap();
-    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+    let executable = crate::test_support::tool("yosys", Some("YOSYS"));
     let workspace = root.path().join("workspace");
     let mut context = RunContext::new(workspace.clone(), ArtifactPolicy::new(false, false, false));
     let design = design::Design {
-        files: vec![SourceFile::new("top.v", "module top; endmodule")],
+        files: vec![SourceFile::new(
+            "top.v",
+            "module top(input [7:0] a,b, output [7:0] y); assign y=a+b; endmodule",
+        )],
         ..design::Design::default()
     };
     let result = comparison::compare(
         &Yosys::new(executable),
         &design,
-        &SynthConfig::new(CellLibrary::new("library(test) {}"), Vec::new()),
+        &SynthConfig::new(
+            CellLibrary::from_path(crate::test_support::file("MCM_LIBERTY")).unwrap(),
+            Vec::new(),
+        ),
         &mut context,
         |job| {
             job.stage_with_statistics("opt", vec!["opt".into()])?;
@@ -33,16 +33,20 @@ fn comparison_combines_multiple_passes_without_an_external_reference() {
             for stage in ["opt-stat", "clean-stat"] {
                 assert_eq!(run.statistics(stage)?.cell_count.get("$add"), Some(&1));
             }
-            assert_eq!(run.statistics("stat")?.cell_count.get("NAND2_X1"), Some(&5));
+            assert!(run.statistics("stat")?.area.is_some_and(|area| area > 0.0));
             SynthMeasurements::parse(run)
         },
         |_| Ok(()),
     )
     .unwrap();
     assert_eq!(result.area_savings(), Some(0.0));
-    assert_eq!(
-        *result.optimized.measurements().optimization.area(),
-        Some(40.0)
+    assert!(
+        result
+            .optimized
+            .measurements()
+            .optimization
+            .area()
+            .is_some_and(|area| area > 0.0)
     );
     assert!(
         crate::metrics::MetricDescriptor::group(
@@ -55,11 +59,9 @@ fn comparison_combines_multiple_passes_without_an_external_reference() {
 }
 
 #[test]
-#[ignore = "requires YOSYS and MCM_LIBERTY pointing to real tools"]
 fn real_synthesis_counts_hierarchy_and_maps_flip_flops() {
-    let yosys = Yosys::new(std::env::var_os("YOSYS").expect("set YOSYS"));
-    let library =
-        CellLibrary::from_path(std::env::var_os("MCM_LIBERTY").expect("set MCM_LIBERTY")).unwrap();
+    let yosys = Yosys::new(crate::test_support::tool("yosys", Some("YOSYS")));
+    let library = CellLibrary::from_path(crate::test_support::file("MCM_LIBERTY")).unwrap();
     let workspace = tempfile::tempdir().unwrap();
     let run = |name: &str, source: &str| {
         let input = SynthInput::new(

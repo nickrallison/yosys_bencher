@@ -13,6 +13,9 @@ mod support;
 
 #[test]
 fn unchanged_source_hits_ccache_across_commits() -> Result<(), Box<dyn Error>> {
+    for name in ["git", "cmake", "ccache"] {
+        support::tool(name, None);
+    }
     let temp = tempdir()?;
     let repository = support::Repository::new(temp.path().join("repository"));
     let source = temp.path().join("source");

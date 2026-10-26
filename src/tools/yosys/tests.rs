@@ -134,30 +134,26 @@ fn materialization_writes_the_compiled_files_and_cleans_up() {
 
 #[test]
 fn stage_logs_are_fresh_per_execution_and_failures_keep_partial_logs() {
-    use std::os::unix::fs::PermissionsExt;
-
     let root = tempfile::tempdir().unwrap();
-    let executable = root.path().join("yosys");
-    fs::write(
-        &executable,
-        "#!/bin/sh\necho first > .yosys-logs/stage.log\n",
-    )
+    let runner = YosysRunner::new(&Yosys::new(crate::test_support::tool(
+        "yosys",
+        Some("YOSYS"),
+    )))
     .unwrap();
-    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
-    let runner = YosysRunner::new(&Yosys::new(&executable)).unwrap();
     let mut context = RunContext::new(
         root.path().join("attempt"),
         ArtifactPolicy::new(true, false, false),
     );
     let mut job = job();
-    job.stage("stage", vec!["stat".into()]).unwrap();
+    job.stage("stage", vec!["log first".into()]).unwrap();
     let prepared = runner.prepare(&job, &mut context).unwrap();
+    let script = prepared.directory.path().join("run.ys");
     let first = runner.measure(&prepared, "first", &mut context).unwrap();
     assert_eq!(first.log("stage").unwrap(), "first\n");
 
     fs::write(
-        &executable,
-        "#!/bin/sh\necho partial > .yosys-logs/stage.log\nexit 9\n",
+        &script,
+        "tee -o .yosys-logs/stage.log log partial\nselect -assert-count 1 *\n",
     )
     .unwrap();
     assert!(matches!(
@@ -169,18 +165,14 @@ fn stage_logs_are_fresh_per_execution_and_failures_keep_partial_logs() {
         "partial\n"
     );
 
-    fs::write(&executable, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::write(&script, "log no-stage-log\n").unwrap();
     assert!(matches!(
         runner.measure(&prepared, "missing", &mut context),
         Err(ExperimentError::Parse(_))
     ));
     assert_eq!(first.log("stage").unwrap(), "first\n");
 
-    fs::write(
-        &executable,
-        "#!/bin/sh\necho 'ERROR: No such command: custom_opt' >&2\nexit 1\n",
-    )
-    .unwrap();
+    fs::write(&script, "custom_opt\n").unwrap();
     assert!(matches!(
         runner.measure(&prepared, "unsupported", &mut context),
         Err(ExperimentError::Unsupported(reason)) if reason.contains("custom_opt")
@@ -210,12 +202,14 @@ fn statistics_count_leaf_cells_across_the_whole_hierarchy() {
 }
 
 #[test]
-#[ignore = "requires a real Yosys executable in YOSYS"]
 fn real_frontend_handles_filelists_includes_defines_and_parameters() {
     let root = tempfile::tempdir().unwrap();
     let mut context = RunContext::new(root.path().into(), ArtifactPolicy::default());
-    let runner =
-        YosysRunner::new(&Yosys::new(std::env::var_os("YOSYS").expect("set YOSYS"))).unwrap();
+    let runner = YosysRunner::new(&Yosys::new(crate::test_support::tool(
+        "yosys",
+        Some("YOSYS"),
+    )))
+    .unwrap();
     let mut design = Design {
         files: vec![SourceFile::new(
             "rtl source/top.sv",

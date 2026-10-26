@@ -232,12 +232,12 @@ impl PreparedPerfStat {
 mod tests {
     use super::*;
     use crate::experiment::{ArtifactPolicy, RunContext, RunOptions};
-    use crate::test_support::executable;
+    use crate::test_support::{required, tool};
 
-    fn collector(root: &Path) -> PerfStat {
-        let path = root.join("perf");
-        executable(&path, include_str!("../../../tests/fixtures/perf.sh"));
-        PerfStat::new(path)
+    fn collector() -> PerfAvailability {
+        PerfAvailability::Available(required(
+            PerfStat::new(tool("perf", Some("PERF"))).prepare(),
+        ))
     }
 
     #[test]
@@ -248,20 +248,21 @@ mod tests {
             root.path().join("workspace"),
             ArtifactPolicy::new(true, false, false),
         )
-        .with_perf_counters(PerfAvailability::prepare(Some(&collector(root.path()))));
-        let output = context.run_process("measured", Command::new("sh")
+        .with_perf_counters(collector());
+        let output = context.run_process("measured", Command::new(tool("sh", Some("SH")))
             .args(["-c", "test \"$BENCH_PERF_TEST\" = 'kept value' || exit 3; test \"${RUST_BACKTRACE+x}\" != x || exit 4; printf child-output; printf child-error >&2; echo ran >> executions"])
             .env("BENCH_PERF_TEST", "kept value").env_remove("RUST_BACKTRACE")).unwrap();
         assert_eq!(output.stdout().unwrap(), "child-output");
         assert_eq!(output.output.stderr, b"child-error");
         let perf = output.perf.unwrap();
-        assert_eq!(perf.get_metric("cycles"), Some(MetricValue::Float(100.5)));
-        assert_eq!(
-            perf.get_metric("task_clock"),
-            Some(MetricValue::Duration(Duration::from_micros(1250)))
+        assert!(
+            matches!(perf.get_metric("task_clock"), Some(MetricValue::Duration(time)) if time > Duration::ZERO)
         );
-        assert_eq!(perf.get_metric("cache_misses"), None);
-        assert_eq!(perf.counters[1].running_percent, 50.0);
+        assert!(
+            perf.counters
+                .iter()
+                .all(|counter| (0.0..=100.0).contains(&counter.running_percent))
+        );
         assert_eq!(
             fs::read_to_string(context.workspace().join("executions")).unwrap(),
             "ran\n"
@@ -300,7 +301,7 @@ mod tests {
                 let output = context
                     .run_process(
                         "measured",
-                        Command::new("sh").args(["-c", "echo ran >> executions"]),
+                        Command::new(tool("sh", Some("SH"))).args(["-c", "echo ran >> executions"]),
                     )
                     .unwrap();
                 assert!(output.perf.is_none());
@@ -324,10 +325,11 @@ mod tests {
             root.path().join("workspace"),
             ArtifactPolicy::new(false, false, false),
         )
-        .with_perf_counters(PerfAvailability::prepare(Some(&collector(root.path()))));
+        .with_perf_counters(collector());
         let result = context.run_process(
             "failing",
-            Command::new("sh").args(["-c", "echo ran >> executions; echo failure >&2; exit 7"]),
+            Command::new(tool("sh", Some("SH")))
+                .args(["-c", "echo ran >> executions; echo failure >&2; exit 7"]),
         );
         assert!(
             matches!(result, Err(ExperimentError::Process { status, detail, .. }) if status.code() == Some(7) && detail == "failure")
@@ -362,30 +364,5 @@ mod tests {
         ] {
             assert!(PerfMeasurements::parse(invalid).is_err());
         }
-    }
-
-    #[test]
-    #[ignore = "requires Linux perf and permission to collect counters"]
-    fn real_perf_counters_are_attached_to_the_measured_process() {
-        let root = tempfile::tempdir().unwrap();
-        let mut context =
-            RunContext::new(root.path().into(), ArtifactPolicy::new(false, false, false))
-                .with_perf_counters(PerfAvailability::prepare(
-                    RunOptions::default().perf_counters.as_ref(),
-                ));
-        let output = context
-            .run_process("real", Command::new("sh").args(["-c", "printf measured"]))
-            .unwrap();
-        assert_eq!(output.stdout().unwrap(), "measured");
-        assert!(
-            context.diagnostics().is_empty(),
-            "{:?}",
-            context.diagnostics()
-        );
-        let perf = output.perf.unwrap();
-        assert!(
-            matches!(perf.get_metric("instructions"), Some(MetricValue::Float(value)) if value > 0.0)
-        );
-        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
     }
 }
