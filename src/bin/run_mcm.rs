@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let json = serde_json::to_string_pretty(&report)?;
     let path = report.directory.join("results.json");
     fs::write(&path, &json)?;
-    eprintln!("Results: {}", path.display());
+    println!("Results: {}", path.display());
     println!("{json}");
     if !report.revision_failures.is_empty()
         || report

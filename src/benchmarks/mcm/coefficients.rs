@@ -110,7 +110,6 @@ mod tests {
     fn default_workloads_are_small_repeatable_and_in_range() {
         let generator = CoefficientGenerator::default();
         let workloads = generator.generate().unwrap();
-        eprintln!("seed {}: {workloads:?}", generator.seed);
         assert_eq!(workloads.len(), 3);
         assert_eq!(workloads, generator.generate().unwrap());
         for coefficients in workloads {

@@ -105,8 +105,8 @@ impl<I: BenchmarkIn> SuiteDefinition<I> {
             CmpSuite::Superset => Version::new(version.major, version.minor + 1),
             CmpSuite::Incompatible => {
                 let next = Version::new(version.major + 1, 0);
-                eprintln!(
-                    "warning: incompatible suite change; bumping major version from {}.{} to {}.0",
+                log::warn!(
+                    "incompatible suite change; bumping major version from {}.{} to {}.0",
                     version.major, version.minor, next.major
                 );
                 next

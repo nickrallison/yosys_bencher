@@ -12,3 +12,4 @@ tempfile = "3.27.0"
 thiserror = "2.0.21"
 sha2 = "0.10.9"
 rand = { version = "0.9", default-features = false, features = ["small_rng"] }
+log = "0.4"
