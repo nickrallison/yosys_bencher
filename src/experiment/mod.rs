@@ -87,6 +87,8 @@ pub struct RunReport<I, O> {
     pub revision_failures: Vec<RevisionFailure>,
 }
 
+pub type DefinitionFor<S> = SuiteDefinition<<<S as Suite>::Procedure as Procedure>::Input>;
+
 pub type ReportFor<S> = RunReport<
     <<S as Suite>::Procedure as Procedure>::Input,
     <<S as Suite>::Procedure as Procedure>::Output,
@@ -108,8 +110,21 @@ impl<S: Suite> Experiment<S> {
         provider: &mut impl ToolProvider<Tool = S::Tool>,
         options: &RunOptions,
     ) -> Result<ReportFor<S>, ExperimentError> {
+        self.run_with_previous(provider, options, None)
+    }
+
+    /// Supply the previous stored definition to resolve the shared suite/procedure version.
+    pub fn run_with_previous(
+        &self,
+        provider: &mut impl ToolProvider<Tool = S::Tool>,
+        options: &RunOptions,
+        previous: Option<&DefinitionFor<S>>,
+    ) -> Result<ReportFor<S>, ExperimentError> {
         check_label(self.suite.name())?;
-        let definition = self.suite.definition()?;
+        let mut definition = self.suite.definition()?;
+        if let Some(previous) = previous {
+            definition = definition.with_previous(previous);
+        }
         let session = self.suite.begin()?;
         let revisions = provider.revisions(&self.revs)?;
         fs::create_dir_all(&self.output_dir)?;

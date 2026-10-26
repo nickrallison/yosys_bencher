@@ -41,18 +41,18 @@ fn storage_preserves_varying_outputs_failures_and_revision_boundaries() {
         Duration::from_secs(1),
         BenchmarkResult::Success(TimingOutput::new(Duration::from_millis(9), ())),
     ));
-    let procedure = ProcedureId::new("synth.timing", 2);
     let version = Version::new(1, 4);
+    let procedure = ProcedureId::new("synth.timing", version);
     let first_commit = CommitId::new("first".into());
     let second_commit = CommitId::new("second".into());
     let results = ExperimentResults::new(HashMap::from([
         (
             first_commit.clone(),
-            SuiteResults::new(procedure.clone(), version, vec![first]),
+            SuiteResults::new(procedure.clone(), vec![first]),
         ),
         (
             second_commit.clone(),
-            SuiteResults::new(procedure.clone(), version, vec![second]),
+            SuiteResults::new(procedure.clone(), vec![second]),
         ),
     ]));
     let id = ExperimentId::new("test");

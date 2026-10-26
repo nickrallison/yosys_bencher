@@ -28,8 +28,8 @@ impl Procedure for TestProcedure {
     type Tools = Tools;
     type Output = TimingOutput;
 
-    fn id(&self) -> ProcedureId {
-        ProcedureId::new("test", 1)
+    fn name(&self) -> &str {
+        "test"
     }
 
     fn run(
@@ -83,9 +83,9 @@ impl Suite for GeneratedSuite {
     }
 }
 
-fn definition(values: &[i64], procedure_version: u32) -> SuiteDefinition<Input> {
+fn definition(values: &[i64]) -> SuiteDefinition<Input> {
     SuiteDefinition::new(
-        ProcedureId::new("test", procedure_version),
+        ProcedureId::new("test", Version::default()),
         values.iter().map(|value| Input(vec![*value])).collect(),
     )
     .unwrap()
@@ -93,17 +93,24 @@ fn definition(values: &[i64], procedure_version: u32) -> SuiteDefinition<Input> 
 
 #[test]
 fn membership_controls_suite_version_without_changing_execution_order() {
-    let previous = definition(&[1, 2], 1);
     let version = Version::new(2, 3);
+    let previous = SuiteDefinition::new(
+        ProcedureId::new("test", version),
+        definition(&[1, 2]).inputs().clone(),
+    )
+    .unwrap();
     for (values, relation, expected_version) in [
         (vec![2, 1], CmpSuite::Eq, version),
         (vec![3, 1, 2], CmpSuite::Superset, Version::new(2, 4)),
         (vec![1], CmpSuite::Incompatible, Version::new(3, 0)),
         (vec![1, 3], CmpSuite::Incompatible, Version::new(3, 0)),
     ] {
-        let current = definition(&values, 1);
+        let current = definition(&values);
         assert_eq!(current.compare(&previous), relation);
-        assert_eq!(current.next_version(&previous, version), expected_version);
+        assert_eq!(current.next_version(&previous), expected_version);
+        let current = current.with_previous(&previous);
+        assert_eq!(current.version(), &expected_version);
+        assert_eq!(current.procedure().version(), &expected_version);
         assert_eq!(
             current.inputs(),
             &values
@@ -115,30 +122,45 @@ fn membership_controls_suite_version_without_changing_execution_order() {
 }
 
 #[test]
-fn procedure_changes_are_incompatible_even_with_identical_inputs() {
-    let previous = definition(&[1, 2], 1);
-    let changed_version = definition(&[1, 2], 2);
-    let changed_name = SuiteDefinition::new(
-        ProcedureId::new("another-procedure", 1),
+fn procedure_name_changes_are_incompatible_even_with_identical_inputs() {
+    let previous = definition(&[1, 2]);
+    let changed = SuiteDefinition::new(
+        ProcedureId::new("another-procedure", Version::default()),
         previous.inputs().clone(),
     )
     .unwrap();
-    for changed in [changed_version, changed_name] {
-        assert_eq!(changed.compare(&previous), CmpSuite::Incompatible);
-        assert_eq!(
-            changed.next_version(&previous, Version::new(1, 5)),
-            Version::new(2, 0)
-        );
-    }
+    assert_eq!(changed.compare(&previous), CmpSuite::Incompatible);
+    assert_eq!(
+        changed.with_previous(&previous).version(),
+        &Version::new(2, 0)
+    );
+}
+
+#[test]
+fn resolved_versions_do_not_feed_back_into_membership_comparison() {
+    let previous = definition(&[1, 2]);
+    let expanded = definition(&[1, 2, 3]).with_previous(&previous);
+    assert_eq!(expanded.version(), &Version::new(1, 1));
+    assert_eq!(expanded.compare(&previous), CmpSuite::Superset);
+    let repeated = definition(&[3, 2, 1]).with_previous(&expanded);
+    assert_eq!(repeated.version(), expanded.version());
+    assert_eq!(repeated.compare(&expanded), CmpSuite::Eq);
+    let decoded: SuiteDefinition<Input> =
+        serde_json::from_str(&serde_json::to_string(&repeated).unwrap()).unwrap();
+    assert_eq!(decoded.procedure(), repeated.procedure());
+    assert_eq!(decoded.version(), &Version::new(1, 1));
 }
 
 #[test]
 fn duplicate_inputs_are_rejected_in_construction_and_deserialization() {
     assert!(matches!(
-        SuiteDefinition::new(ProcedureId::new("test", 1), vec![Input(vec![1]); 2]),
+        SuiteDefinition::new(
+            ProcedureId::new("test", Version::default()),
+            vec![Input(vec![1]); 2]
+        ),
         Err(ExperimentError::DuplicateInput { index: 1 })
     ));
-    let mut json = serde_json::to_value(definition(&[1], 1)).unwrap();
+    let mut json = serde_json::to_value(definition(&[1])).unwrap();
     json["inputs"] = serde_json::json!([[1], [1]]);
     assert!(serde_json::from_value::<SuiteDefinition<Input>>(json).is_err());
 }
@@ -185,8 +207,8 @@ impl YosysProcedure for InspectYosys {
     type Config = TimingConfig;
     type Measurements = ();
 
-    fn id(&self) -> ProcedureId {
-        ProcedureId::new("inspect-yosys", 1)
+    fn name(&self) -> &str {
+        "inspect-yosys"
     }
 
     fn job(&self, input: &TimingInput) -> Result<crate::tools::yosys::YosysJob, ExperimentError> {
@@ -231,7 +253,7 @@ fn yosys_adapter_keeps_tools_out_of_workload_identity() {
     let recorded: TimingInput =
         serde_json::from_str(&serde_json::to_string(&input).unwrap()).unwrap();
     assert_eq!(recorded, input);
-    assert_eq!(procedure.id(), ProcedureId::new("inspect-yosys", 1));
+    assert_eq!(procedure.name(), "inspect-yosys");
 }
 
 #[test]
@@ -267,8 +289,8 @@ impl Procedure for InvocationProcedure {
     type Tools = std::rc::Rc<Cell<u32>>;
     type Output = TimingOutput;
 
-    fn id(&self) -> ProcedureId {
-        ProcedureId::new("invocation", 1)
+    fn name(&self) -> &str {
+        "invocation"
     }
     fn run(
         &self,
@@ -405,8 +427,14 @@ fn experiment_keeps_attempt_order_continues_failures_and_refreshes_session_and_i
     );
     experiment.suite().generated.set(7);
     let next = experiment
-        .run(&mut provider, &RunOptions::default())
+        .run_with_previous(
+            &mut provider,
+            &RunOptions::default(),
+            Some(&report.definition),
+        )
         .unwrap();
+    assert_eq!(report.definition.version(), &Version::new(1, 0));
+    assert_eq!(next.definition.procedure().version(), &Version::new(2, 0));
     assert_eq!(experiment.suite().sessions.get(), 2);
     assert_eq!(next.definition.inputs()[0], Input(vec![7]));
     assert_eq!(

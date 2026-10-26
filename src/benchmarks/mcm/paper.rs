@@ -50,7 +50,6 @@ crate::benchmark_metrics! {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct PaperKey {
-    procedure: u32,
     coefficients: Vec<i64>,
     input_width: u32,
     bit_width: u32,
@@ -103,9 +102,7 @@ impl PaperSession {
         context: &mut RunContext,
     ) -> Result<PaperReference> {
         self.validate_identity(&input.paper_identity)?;
-        #[allow(deprecated)] // Keep reference identity tied to the current procedure.
         let key = PaperKey {
-            procedure: super::VERSION,
             coefficients: input.coefficients.clone(),
             input_width: input.input_width,
             bit_width: input.options.paper_bit_width,

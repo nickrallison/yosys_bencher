@@ -79,19 +79,17 @@ impl<BMI, BMO> ExperimentResults<BMI, BMO> {
 )]
 pub struct SuiteResults<BMI, BMO> {
     procedure: ProcedureId,
-    version: Version,
     benchmarks: Vec<BenchmarkResults<BMI, BMO>>,
 }
 
 impl<BMI, BMO> SuiteResults<BMI, BMO> {
-    pub fn new(
-        procedure: ProcedureId,
-        version: Version,
-        benchmarks: Vec<BenchmarkResults<BMI, BMO>>,
-    ) -> Self {
+    pub fn version(&self) -> &Version {
+        self.procedure.version()
+    }
+
+    pub fn new(procedure: ProcedureId, benchmarks: Vec<BenchmarkResults<BMI, BMO>>) -> Self {
         Self {
             procedure,
-            version,
             benchmarks,
         }
     }

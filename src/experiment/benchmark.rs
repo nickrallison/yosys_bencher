@@ -5,19 +5,18 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::metrics::{MetricDescriptor, MetricValue};
 
-use super::{ExperimentError, RunContext};
+use super::{ExperimentError, RunContext, Version};
 
-/// Identifies measurement semantics independently of suite membership.
-/// Bump the version when commands, timing boundaries, or interpretation change.
+/// Procedure name paired with the version resolved from suite comparison.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Getters)]
 #[getset(get = "pub")]
 pub struct ProcedureId {
     name: String,
-    version: u32,
+    version: Version,
 }
 
 impl ProcedureId {
-    pub fn new(name: impl Into<String>, version: u32) -> Self {
+    pub fn new(name: impl Into<String>, version: Version) -> Self {
         Self {
             name: name.into(),
             version,
@@ -31,8 +30,8 @@ pub trait Procedure {
     type Tools;
     type Output: BenchmarkOut;
 
-    /// Every behavior-affecting setting must be in Input or identified here.
-    fn id(&self) -> ProcedureId;
+    /// Stable procedure name. The suite resolves its version from previous definitions.
+    fn name(&self) -> &str;
 
     fn run(
         &self,

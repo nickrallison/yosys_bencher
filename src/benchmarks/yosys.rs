@@ -1,5 +1,5 @@
 use crate::{
-    experiment::{BenchmarkIn, BenchmarkOut, ExperimentError, Procedure, ProcedureId, RunContext},
+    experiment::{BenchmarkIn, BenchmarkOut, ExperimentError, Procedure, RunContext},
     metrics::{MetricDescriptor, MetricType, MetricValue},
     tools::yosys::{Yosys, YosysJob, YosysRun, YosysRunner, design},
 };
@@ -13,7 +13,7 @@ pub trait YosysProcedure {
     type Config: BenchmarkIn;
     type Measurements: BenchmarkOut;
 
-    fn id(&self) -> ProcedureId;
+    fn name(&self) -> &str;
     fn job(&self, input: &YosysBenchmarkInput<Self::Config>) -> Result<YosysJob>;
     fn parse(
         &self,
@@ -37,8 +37,8 @@ impl<P: YosysProcedure> Procedure for YosysBenchmark<P> {
     type Tools = Yosys;
     type Output = YosysBenchmarkOutput<P::Measurements>;
 
-    fn id(&self) -> ProcedureId {
-        self.procedure.id()
+    fn name(&self) -> &str {
+        self.procedure.name()
     }
 
     fn run(

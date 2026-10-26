@@ -3,7 +3,7 @@ pub use crate::benchmarks::yosys::{
 };
 pub use crate::tools::yosys::design;
 use crate::{
-    experiment::{BenchmarkIn, ExperimentError, ProcedureId, Suite},
+    experiment::{BenchmarkIn, ExperimentError, Suite},
     tools::yosys::{Yosys, YosysJob, YosysRun, argument, design::SourceFile, hierarchy_commands},
 };
 use serde::{Deserialize, Serialize};
@@ -89,8 +89,8 @@ impl YosysProcedure for TimingProcedure {
     type Config = TimingConfig;
     type Measurements = ();
 
-    fn id(&self) -> ProcedureId {
-        ProcedureId::new("yosys.timing", 1)
+    fn name(&self) -> &str {
+        "yosys.timing"
     }
 
     fn job(&self, input: &TimingInput) -> Result<YosysJob> {
@@ -169,8 +169,8 @@ impl YosysProcedure for SynthProcedure {
     type Config = SynthConfig;
     type Measurements = SynthMeasurements;
 
-    fn id(&self) -> ProcedureId {
-        ProcedureId::new("yosys.synth", 1)
+    fn name(&self) -> &str {
+        "yosys.synth"
     }
     fn job(&self, input: &SynthInput) -> Result<YosysJob> {
         SynthFlow::job(input.design(), input.config())

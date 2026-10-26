@@ -6,8 +6,8 @@
 
 # Experiment model
 
-- `Procedure` defines execution, its input/output types, runtime tools, and an
-  explicit `ProcedureId` (name and version).
+- `Procedure` defines execution, its input/output types, runtime tools, and a
+  stable name. The resolved `ProcedureId` carries that name and the computed suite version.
 - `BenchmarkIn` identifies one workload. It supports equality, hashing, and
   serialization. Tested revisions, executable locations, workspaces, and artifact
   policy are separate runtime values.
@@ -22,13 +22,15 @@ revisions and record them with the results. Previous definitions describe what
 ran; they are not a generator cache. Generator settings may be retained by a
 concrete suite as provenance, but comparison uses actual inputs.
 
-`SuiteDefinition::compare` compares procedure identity and input membership,
-ignoring input order. `next_version` keeps the version for equal membership,
-bumps minor for a strict superset, and bumps major (resetting minor) otherwise.
+`SuiteDefinition::compare` compares procedure names and input membership,
+ignoring input order and assigned versions. `with_previous` resolves one shared
+suite/procedure version: keep it for equal membership, bump minor for a strict
+superset, and bump major (resetting minor) otherwise. New suites start at 1.0.
 Major version bumps print a warning about the incompatible suite change.
-Execution order is retained separately in the input vector. Procedure changes
-are incompatible even when inputs are identical. Authors must bump the procedure
-version when commands, timing boundaries, or measurement interpretation change.
+`Experiment::run_with_previous` accepts a previous recorded definition; the store
+will supply it once implemented. Procedures have no manual version constants.
+Source-only changes to commands, timing boundaries, or parsing still need
+procedure-definition tracking; membership comparison cannot detect those changes.
 
 `YosysBenchmark<P>` adapts a `YosysProcedure` to `Procedure`. Its inputs contain
 a design and configuration; the installed `Yosys` is passed separately. Designs

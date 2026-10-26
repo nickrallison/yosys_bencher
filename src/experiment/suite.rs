@@ -17,6 +17,12 @@ impl Version {
     }
 }
 
+impl Default for Version {
+    fn default() -> Self {
+        Self::new(1, 0)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CmpSuite {
     Eq,
@@ -45,7 +51,10 @@ pub trait Suite {
     fn definition(
         &self,
     ) -> Result<SuiteDefinition<<Self::Procedure as Procedure>::Input>, ExperimentError> {
-        SuiteDefinition::new(self.procedure().id(), self.inputs()?)
+        SuiteDefinition::new(
+            ProcedureId::new(self.procedure().name(), Version::default()),
+            self.inputs()?,
+        )
     }
 }
 
@@ -68,8 +77,9 @@ impl<I: BenchmarkIn> SuiteDefinition<I> {
         Ok(Self { procedure, inputs })
     }
 
+    /// Compare declared procedure names and actual input membership, ignoring assigned versions.
     pub fn compare(&self, previous: &Self) -> CmpSuite {
-        if self.procedure != previous.procedure {
+        if self.procedure.name() != previous.procedure.name() {
             return CmpSuite::Incompatible;
         }
         let current: HashSet<_> = self.inputs.iter().collect();
@@ -83,8 +93,20 @@ impl<I: BenchmarkIn> SuiteDefinition<I> {
         }
     }
 
+    pub fn version(&self) -> &Version {
+        self.procedure.version()
+    }
+
+    /// Resolve the single suite/procedure version against the stored definition.
+    pub fn with_previous(mut self, previous: &Self) -> Self {
+        let version = self.next_version(previous);
+        self.procedure = ProcedureId::new(self.procedure.name().clone(), version);
+        self
+    }
+
     /// Warns when an incompatible change requires a major version bump.
-    pub fn next_version(&self, previous: &Self, version: Version) -> Version {
+    pub fn next_version(&self, previous: &Self) -> Version {
+        let version = *previous.version();
         match self.compare(previous) {
             CmpSuite::Eq => version,
             CmpSuite::Superset => Version::new(version.major, version.minor + 1),
