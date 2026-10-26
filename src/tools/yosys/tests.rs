@@ -134,7 +134,6 @@ fn statistics_count_leaf_cells_across_the_whole_hierarchy() {
     let stats = Statistics::parse(text).unwrap();
     assert_eq!(stats.cell_count, HashMap::from([("NAND2_X1".into(), 2)]));
     assert_eq!(stats.area, Some(84.588));
-    // Historical stat JSON counted module instances in num_cells.
     assert_eq!(
         Statistics::parse(&text.replace("\"num_cells\":2,\"area\"", "\"num_cells\":4,\"area\""))
             .unwrap(),

@@ -1,5 +1,3 @@
-//! MCM and baseline synthesis comparison with a paper reference.
-
 use crate::{
     benchmarks::synth::{CellLibrary, SynthConfig, comparison::compare},
     experiment::{BenchmarkIn, ExperimentError, Procedure, RunContext, Suite},

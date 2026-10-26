@@ -1,11 +1,3 @@
-//! Temporary demonstration of the storage interface and result relationships.
-//!
-//! Warning: this is an interface sketch, not a durable API or database schema.
-//! The typed inputs, outputs, and generic result shapes illustrate the intended
-//! model, but these types and their serialized layout are expected to change
-//! when the actual store is implemented. Do not build persistence around them.
-
-// The sketch uses its own deprecated types until the real store replaces it.
 #![allow(deprecated)]
 
 use std::{collections::HashMap, fmt::Display};
@@ -91,7 +83,6 @@ impl<BMI, BMO> SuiteResults<BMI, BMO> {
     }
 }
 
-/// Attempts for one input at the revision containing these suite results.
 #[derive(Debug, Clone, Serialize, Deserialize, Getters)]
 #[getset(get = "pub")]
 #[deprecated(

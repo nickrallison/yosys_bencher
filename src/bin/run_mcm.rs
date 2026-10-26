@@ -1,4 +1,3 @@
-//! Small default MCM workloads across the selected Yosys revisions.
 use std::{fs, path::PathBuf};
 use yosys_bench::{
     benchmarks::{

@@ -5,7 +5,6 @@ use std::{
 
 use super::{AttemptRecord, ExperimentError, Procedure, RunContext, RunOptions};
 
-/// Holds temporary workspaces until the attempt completes; retained ones survive errors.
 struct Workspace {
     path: PathBuf,
     temporary: Option<tempfile::TempDir>,

@@ -25,14 +25,11 @@ impl<O> From<Result<O, ExperimentError>> for AttemptOutcome<O> {
     }
 }
 
-/// One execution, shared by runtime reports and stored results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttemptRecord<O> {
     pub started_at: SystemTime,
-    /// Complete attempt time, including preparation and diagnostics.
     pub duration: Duration,
     pub outcome: AttemptOutcome<O>,
-    /// Artifact and profiling errors that do not invalidate the measurement.
     pub diagnostics: Vec<String>,
 }
 
@@ -40,7 +37,6 @@ pub struct AttemptRecord<O> {
 pub struct Attempt<O> {
     pub revision: Commit,
     pub input_index: usize,
-    /// Zero-based repetition index, matched across revisions.
     pub sample_index: u32,
     pub artifacts: Option<PathBuf>,
     #[serde(flatten)]

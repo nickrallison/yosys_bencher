@@ -1,5 +1,3 @@
-//! References measured once per workload and sample within one invocation.
-
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -53,7 +51,6 @@ impl<M: BenchmarkOut> BenchmarkOut for Reference<M> {
     }
 }
 
-/// Create in `Suite::begin`, then share across revisions. Generation is never cached.
 pub struct ReferenceSession<K, M> {
     tool: ExternalTool,
     identity: ExecutableId,
@@ -90,8 +87,6 @@ impl<K: Eq + Hash, M: Clone> ReferenceSession<K, M> {
         Ok(())
     }
 
-    /// The key must include every parameter that affects this reference's execution.
-    /// The sample index is included automatically; failures are never cached.
     pub fn measure(
         &self,
         identity: &ExecutableId,
@@ -99,7 +94,6 @@ impl<K: Eq + Hash, M: Clone> ReferenceSession<K, M> {
         context: &mut RunContext,
         run: impl FnOnce(&ExternalTool, &mut RunContext) -> Result<(M, Option<PerfMeasurements>)>,
     ) -> Result<Reference<M>> {
-        // Recheck even on cache hits: an edited executable invalidates the workload.
         self.validate_identity(identity)?;
         let key = (key, *context.sample_index());
         if let Some(reference) = self.references.borrow().get(&key) {

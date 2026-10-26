@@ -1,5 +1,3 @@
-//! Seeded signed coefficients with heavy-tailed magnitudes.
-
 use std::ops::RangeInclusive;
 
 use rand::{Rng, SeedableRng, rngs::SmallRng};
@@ -35,7 +33,6 @@ impl CoefficientSets {
     }
 }
 
-/// Uniform lengths and signs with shifted Pareto magnitudes, filtered to the value range.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoefficientGenerator {
     pub seed: u64,
@@ -80,7 +77,6 @@ impl CoefficientGenerator {
             let mut coefficients = Vec::with_capacity(length as usize);
             for _ in 0..length {
                 let mut accepted = None;
-                // Bound rejection for impossible or impractically narrow ranges.
                 for _ in 0..1_000_000 {
                     let pareto = (1.0 - random.random::<f64>()).powf(-1.0 / (self.a - 1.0));
                     let magnitude = (self.scale * (pareto - 1.0)).trunc();

@@ -1,5 +1,3 @@
-//! Counters collected during the measured process, independently of flamegraphs.
-
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -29,11 +27,9 @@ const EVENTS: &[(&str, &str)] = &[
     ("page_faults", "page-faults"),
 ];
 
-/// Values are scaled by perf when counters are multiplexed. Keep coverage alongside them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PerfCounter {
     pub event: String,
-    /// Unavailable counters are absent values, never zeroes.
     pub value: Option<f64>,
     pub unit: String,
     pub runtime: Duration,
@@ -91,7 +87,6 @@ impl PerfMeasurements {
         Ok(Self { counters })
     }
 
-    /// Sum matching PMUs on hybrid CPUs; retain individual records in `counters`.
     fn value(&self, event: &str) -> Option<f64> {
         let mut values = self
             .counters
@@ -129,7 +124,6 @@ impl BenchmarkOut for PerfMeasurements {
         let (_, event) = EVENTS.iter().find(|&&(key, _)| key == name)?;
         let value = self.value(event)?;
         if name == "task_clock" {
-            // perf reports task-clock in milliseconds.
             Duration::try_from_secs_f64(value / 1000.0)
                 .ok()
                 .map(MetricValue::Duration)
@@ -139,7 +133,6 @@ impl BenchmarkOut for PerfMeasurements {
     }
 }
 
-/// Clones share a single availability probe, so an experiment probes once.
 #[derive(Debug, Clone)]
 pub struct PerfStat {
     executable: PathBuf,
@@ -160,7 +153,6 @@ impl PerfStat {
         }
     }
 
-    /// Probe a harmless command before touching the workload. Never retry a workload.
     pub fn check(&self) -> Result<(), ExperimentError> {
         self.availability
             .get_or_init(|| self.probe().map_err(|error| error.to_string()))

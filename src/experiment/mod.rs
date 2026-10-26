@@ -35,9 +35,7 @@ pub struct Experiment<S: Suite> {
 pub struct RunOptions {
     pub artifacts: ArtifactPolicy,
     pub perf: Option<PerfProfiler>,
-    /// Counters from each measured process. Enabled by default, optional when unavailable.
     pub perf_counters: Option<PerfStat>,
-    /// Independent attempts per input and revision, outside workload identity.
     pub repetitions: NonZeroU32,
 }
 
@@ -77,8 +75,6 @@ impl<S: Suite> Experiment<S> {
         }
     }
 
-    /// Generate inputs and session state afresh, then execute sequentially.
-    /// Revision setup failures and workload failures are retained in the report.
     pub fn run(
         &self,
         provider: &mut impl ToolProvider<Tool = S::Tool>,
@@ -87,7 +83,6 @@ impl<S: Suite> Experiment<S> {
         self.run_with_previous(provider, options, None)
     }
 
-    /// Supply the previous stored definition to resolve the shared suite/procedure version.
     pub fn run_with_previous(
         &self,
         provider: &mut impl ToolProvider<Tool = S::Tool>,

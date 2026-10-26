@@ -26,12 +26,10 @@ impl Default for Version {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CmpSuite {
     Eq,
-    /// The current suite contains every previous input and adds new inputs.
     Superset,
     Incompatible,
 }
 
-/// Authoring interface. Generate inputs afresh for each experiment invocation.
 pub trait Suite {
     type Tool;
     type Session;
@@ -47,7 +45,6 @@ pub trait Suite {
         session: &Self::Session,
     ) -> Result<<Self::Procedure as Procedure>::Tools, ExperimentError>;
 
-    /// Records actual inputs for comparison and execution; never caches generation.
     fn definition(
         &self,
     ) -> Result<SuiteDefinition<<Self::Procedure as Procedure>::Input>, ExperimentError> {
@@ -58,7 +55,6 @@ pub trait Suite {
     }
 }
 
-/// Actual inputs from one invocation. Order is retained for execution, not identity.
 #[derive(Debug, Clone, Serialize, Getters)]
 #[getset(get = "pub")]
 pub struct SuiteDefinition<I> {
@@ -77,7 +73,6 @@ impl<I: BenchmarkIn> SuiteDefinition<I> {
         Ok(Self { procedure, inputs })
     }
 
-    /// Compare declared procedure names and actual input membership, ignoring assigned versions.
     pub fn compare(&self, previous: &Self) -> CmpSuite {
         if self.procedure.name() != previous.procedure.name() {
             return CmpSuite::Incompatible;
@@ -97,14 +92,12 @@ impl<I: BenchmarkIn> SuiteDefinition<I> {
         self.procedure.version()
     }
 
-    /// Resolve the single suite/procedure version against the stored definition.
     pub fn with_previous(mut self, previous: &Self) -> Self {
         let version = self.next_version(previous);
         self.procedure = ProcedureId::new(self.procedure.name().clone(), version);
         self
     }
 
-    /// Warns when an incompatible change requires a major version bump.
     pub fn next_version(&self, previous: &Self) -> Version {
         let version = *previous.version();
         match self.compare(previous) {
@@ -122,7 +115,6 @@ impl<I: BenchmarkIn> SuiteDefinition<I> {
     }
 }
 
-// Deserialization must enforce the same duplicate-input invariant as construction.
 impl<'de, I: BenchmarkIn> Deserialize<'de> for SuiteDefinition<I> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]

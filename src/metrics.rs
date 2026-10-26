@@ -11,7 +11,6 @@ pub enum MetricValue {
 }
 
 impl MetricValue {
-    /// Scalar kind; groups and samples are described by their child schemas.
     pub fn kind(&self) -> Option<MetricType> {
         match self {
             Self::Int(_) => Some(MetricType::Int),
@@ -100,7 +99,6 @@ impl MetricDescriptor {
     }
 }
 
-// Missing optional metrics are allowed; every reported value must match its schema.
 fn matches_group(children: &[MetricDescriptor], values: &BTreeMap<String, MetricValue>) -> bool {
     values.iter().all(|(name, value)| {
         children
@@ -109,7 +107,6 @@ fn matches_group(children: &[MetricDescriptor], values: &BTreeMap<String, Metric
     })
 }
 
-/// Declare a metric's name, schema, and accessor together.
 #[macro_export]
 macro_rules! benchmark_metrics {
     ($ty:ty { $( $form:ident $field:ident ( $($args:tt)* ); )* }) => {

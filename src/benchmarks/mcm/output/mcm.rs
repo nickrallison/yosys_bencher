@@ -7,7 +7,6 @@ use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McmMeasurements {
-    /// Yosys pass self CPU time, excluding subprocess startup and other passes.
     pub cpu_time: Duration,
     pub adds_subs: u64,
     pub negations: u64,

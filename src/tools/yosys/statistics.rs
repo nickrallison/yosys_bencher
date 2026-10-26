@@ -11,7 +11,6 @@ pub struct Statistics {
 }
 
 impl Statistics {
-    /// Whole-design statistics from a dedicated `stat -json` capture.
     pub fn parse(text: &str) -> Result<Self> {
         #[derive(Deserialize)]
         struct Counts {
@@ -43,7 +42,6 @@ impl Statistics {
                 .try_fold(0_u64, |sum, count| sum.checked_add(*count))
                 .ok_or_else(|| invalid("cell count overflow"))
         };
-        // Yosys includes module instances in the type table. Count only leaf cells.
         let cell_count: HashMap<_, _> = counts
             .num_cells_by_type
             .iter()
@@ -55,7 +53,6 @@ impl Statistics {
             })
             .map(|(name, count)| (name.clone(), *count))
             .collect();
-        // Older Yosys includes module instances in num_cells; newer versions exclude them.
         if counts.num_cells != sum(&cell_count)?
             && counts.num_cells != sum(&counts.num_cells_by_type)?
         {

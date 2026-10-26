@@ -37,7 +37,6 @@ pub(crate) fn check_label(label: &str) -> Result<(), ExperimentError> {
     Ok(())
 }
 
-/// Runtime resources for one attempt, outside workload identity.
 #[derive(Debug, Getters)]
 #[getset(get = "pub")]
 pub struct RunContext {
@@ -68,7 +67,6 @@ impl RunContext {
         self
     }
 
-    /// Experiment run options enable counters by default; standalone contexts opt in here.
     pub fn with_perf_counters(mut self, perf: Option<PerfStat>) -> Self {
         self.perf_counters = perf;
         self
@@ -85,9 +83,6 @@ impl RunContext {
         }
     }
 
-    /// Only spawning, execution, and output collection contribute to elapsed time.
-    /// When enabled, wall time includes the perf stat wrapper's overhead.
-    /// Logs are retained here; callers handle scripts, netlists, and perf diagnostics.
     pub fn run_process(
         &mut self,
         label: &str,

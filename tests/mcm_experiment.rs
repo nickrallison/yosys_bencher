@@ -124,7 +124,6 @@ fn experiment_builds_two_revisions_and_runs_composed_mcm_without_storage() {
             assert!(counters[3]["value"].is_null());
         }
     }
-    // One harmless availability probe, eight Yosys runs, and two paper samples.
     assert_eq!(
         fs::read_to_string(perf.with_extension("calls"))
             .unwrap()

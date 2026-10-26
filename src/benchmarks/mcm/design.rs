@@ -14,8 +14,6 @@ pub(super) fn build(input: &McmInput) -> Result<Design> {
 }
 
 pub(super) fn verilog(benchmark: &McmInput) -> Result<String> {
-    // A positive signed magnitude needs its own sign bit, including when unary
-    // minus is applied. Product width is the sum of the signed operand widths.
     let widths: Vec<_> = benchmark
         .coefficients
         .iter()

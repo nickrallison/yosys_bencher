@@ -1,5 +1,3 @@
-//! Content identity for fixed executables used alongside the tool under test.
-
 use std::{fs, path::PathBuf};
 
 use serde::{Deserialize, Serialize};

@@ -1,5 +1,3 @@
-//! Compare an optimization with the same synthesis flow applied to the original design.
-
 use contracts::contract_trait;
 use serde::{Deserialize, Serialize};
 
@@ -82,31 +80,6 @@ impl<M: BenchmarkOut, R: BenchmarkOut> BenchmarkOut for ComparisonOutput<M, R> {
     }
 }
 
-/// Configure optimization stages after elaboration and before standard synthesis.
-/// The parser may combine any stage logs, statistics, and pass timings.
-/// Pass timings default to enabled; the configuration closure can disable them.
-/// Supply `|_| Ok(())` when no external reference is needed.
-///
-/// ```no_run
-/// # use yosys_bench::{benchmarks::synth::{comparison::compare, SynthConfig},
-/// #     experiment::{ExperimentError, RunContext}, tools::yosys::{Yosys, design::Design}};
-/// # fn example(yosys: &Yosys, design: &Design, config: &SynthConfig, context: &mut RunContext) -> Result<(), ExperimentError> {
-/// let result = compare(yosys, design, config, context,
-///     |job| {
-///         job.stage_with_statistics("opt", vec!["opt".into()])?;
-///         job.stage_with_statistics("clean", vec!["clean".into()])
-///     },
-///     |run| {
-///         let after_opt = run.statistics("opt-stat")?;
-///         let after_clean = run.statistics("clean-stat")?;
-///         // Parse benchmark-specific measurements here.
-///         Ok(())
-///     },
-///     |_| Ok(()),
-/// )?;
-/// let savings = result.area_savings();
-/// # Ok(()) }
-/// ```
 pub fn compare<M, R>(
     yosys: &Yosys,
     design: &Design,
@@ -137,7 +110,6 @@ pub fn compare<M, R>(
         context,
         SynthMeasurements::parse,
     )?;
-    // Diagnostics must not perturb any of the measurements above.
     for (label, job) in [("baseline", &baseline), ("optimized", &optimized)] {
         runner.diagnose(job, label, context);
     }

@@ -16,7 +16,6 @@ struct Input(Vec<i64>);
 
 impl BenchmarkIn for Input {}
 
-// Deliberately has no serialization, equality, hashing, or cloning requirements.
 struct Tools {
     calls: Cell<u32>,
 }

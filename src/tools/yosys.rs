@@ -39,12 +39,10 @@ pub struct YosysJob {
     pub design: Design,
     pub assets: Vec<SourceFile>,
     pub stages: Vec<YosysStage>,
-    /// Collect Yosys pass self CPU times in addition to process wall time.
     pub timings: bool,
 }
 
 impl YosysJob {
-    /// Start a job with hierarchy selection and parameter elaboration.
     pub fn new(design: Design) -> Result<Self> {
         let commands = hierarchy_commands(&design)?;
         let mut job = Self {
@@ -55,7 +53,6 @@ impl YosysJob {
         Ok(job)
     }
 
-    /// Capture both the stage log and a separate snapshot of RTL cell statistics.
     pub fn stage_with_statistics(&mut self, name: &str, commands: Vec<String>) -> Result<()> {
         self.stage(name, commands)?;
         self.stage(&format!("{name}-stat"), vec!["stat -json".into()])
@@ -76,7 +73,6 @@ impl YosysJob {
     }
 }
 
-/// Captured data belongs to this execution, independent of later runs of the job.
 #[derive(Debug)]
 pub struct YosysRun {
     pub process: ProcessOutput,
@@ -265,7 +261,6 @@ impl YosysRunner {
         context: &mut RunContext,
     ) -> Result<ProcessOutput> {
         check_label(label)?;
-        // A failed repetition must never expose logs from an earlier execution.
         let directory = job.directory.path().join(".yosys-logs");
         fs::remove_dir_all(&directory)?;
         fs::create_dir(&directory)?;
@@ -296,7 +291,6 @@ impl YosysRunner {
         Ok(output)
     }
 
-    /// Extra invocations only; failures are diagnostics, never measurement failures.
     pub fn diagnose(&self, job: &PreparedYosysJob, label: &str, context: &mut RunContext) {
         if *context.artifacts().netlists() {
             let result = self.netlist(job, label, context);
@@ -506,7 +500,6 @@ pub fn hierarchy_commands(design: &Design) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests;
 
-/// Yosys retains quotes in pass arguments; only filenames are unquoted by the frontend.
 pub fn argument(value: &str) -> Result<String> {
     if value.is_empty()
         || value

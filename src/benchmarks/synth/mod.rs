@@ -25,7 +25,6 @@ impl TimingConfig {
     }
 }
 
-/// Library contents are workload identity; a path alone cannot detect edits.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Getters)]
 #[getset(get = "pub")]
 pub struct CellLibrary {
@@ -117,7 +116,6 @@ impl SynthFlow {
         Ok(job)
     }
 
-    /// Append the standard flow after any benchmark-specific stages.
     pub fn append(job: &mut YosysJob, config: &SynthConfig) -> Result<()> {
         job.assets
             .push(SourceFile::new("cells.lib", config.cell_lib.liberty()));
@@ -174,7 +172,6 @@ impl YosysProcedure for SynthProcedure {
     }
 }
 
-/// One workload per design/library pair. Inputs are regenerated each invocation.
 pub struct SynthSuite {
     pub name: String,
     pub designs: Vec<design::Design>,

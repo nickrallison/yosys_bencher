@@ -12,7 +12,6 @@ use std::{hash::Hash, time::Duration};
 
 type Result<T> = std::result::Result<T, ExperimentError>;
 
-/// Measure and parse one prepared job. Coordinators schedule diagnostics separately.
 pub fn measure<M>(
     runner: &YosysRunner,
     job: &PreparedYosysJob,

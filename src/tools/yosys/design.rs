@@ -5,24 +5,18 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-/// Ordered source files and elaboration settings for a synthesis workload.
-/// Paths are relative to the design root; file contents are retained for identity.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Design {
     pub files: Vec<SourceFile>,
-    /// Include-only files, staged with sources but not read as compilation units.
     pub headers: Vec<SourceFile>,
     pub options: ReadOptions,
-    /// None lets the procedure determine the top module.
     pub top: Option<String>,
-    /// Top-module parameter overrides, retaining expressions as text.
     pub parameters: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SourceFile {
-    /// Logical path within the design, including the filename used by includes.
     pub path: PathBuf,
     pub source: String,
 }
@@ -35,7 +29,6 @@ impl SourceFile {
         }
     }
 
-    /// Reads afresh from root/path while retaining only the logical path.
     pub fn from_path(root: impl AsRef<Path>, path: impl AsRef<Path>) -> std::io::Result<Self> {
         let path = path.as_ref();
         Ok(Self::new(
@@ -49,11 +42,8 @@ impl SourceFile {
 #[serde(default)]
 pub struct ReadOptions {
     pub system_verilog: bool,
-    /// Macro names with optional values, e.g. DEBUG or WIDTH=32.
     pub defines: BTreeMap<String, Option<String>>,
-    /// Ordered search paths, relative to the design root.
     pub include_dirs: Vec<PathBuf>,
-    /// Additional frontend arguments in invocation order.
     pub extra_args: Vec<String>,
 }
 
