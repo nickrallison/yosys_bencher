@@ -1,9 +1,4 @@
-use std::{
-    fs,
-    os::unix::fs::PermissionsExt,
-    path::Path,
-    process::{Command, Output},
-};
+use std::{fs, path::Path};
 use yosys_bench::{
     benchmarks::{
         mcm::{CoefficientSets, McmSuite, PaperTool},
@@ -20,70 +15,31 @@ use yosys_bench::{
     tools::perf::PerfStat,
 };
 
-fn run(command: &mut Command) -> Output {
-    let output = command.output().unwrap();
-    assert!(
-        output.status.success(),
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output
-}
-
-fn git(repository: &Path, args: &[&str]) -> String {
-    String::from_utf8(run(Command::new("git").arg("-C").arg(repository).args(args)).stdout)
-        .unwrap()
-        .trim()
-        .into()
-}
-
-fn commit(repository: &Path) -> String {
-    git(repository, &["add", "."]);
-    git(
-        repository,
-        &[
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.com",
-            "commit",
-            "-m",
-            "fixture",
-        ],
-    );
-    git(repository, &["rev-parse", "HEAD"])
-}
+mod support;
 
 #[test]
 fn experiment_builds_two_revisions_and_runs_composed_mcm_without_storage() {
     let root = tempfile::tempdir().unwrap();
-    let repository = root.path().join("original");
-    fs::create_dir(&repository).unwrap();
-    git(&repository, &["init", "-b", "main"]);
-    fs::write(repository.join("CMakeLists.txt"), "cmake_minimum_required(VERSION 3.16)\nproject(fake_yosys NONE)\ninstall(PROGRAMS yosys DESTINATION bin)\n").unwrap();
-    fs::write(repository.join("yosys"), include_str!("fixtures/yosys.sh")).unwrap();
-    fs::set_permissions(repository.join("yosys"), fs::Permissions::from_mode(0o755)).unwrap();
-    let first = commit(&repository);
-    fs::write(repository.join("revision.txt"), "second").unwrap();
-    let second = commit(&repository);
+    let repository = support::Repository::new(root.path().join("original"));
+    support::executable(
+        &repository.path().join("yosys"),
+        include_str!("fixtures/yosys.sh"),
+    );
+    let first = repository.commit(&[("CMakeLists.txt", "cmake_minimum_required(VERSION 3.16)\nproject(fake_yosys NONE)\ninstall(PROGRAMS yosys DESTINATION bin)\n")]);
+    let second = repository.commit(&[("revision.txt", "second")]);
     let paper = root.path().join("paper");
-    fs::write(&paper, include_str!("fixtures/paper.sh")).unwrap();
-    fs::set_permissions(&paper, fs::Permissions::from_mode(0o755)).unwrap();
-    let library = root.path().join("cells.lib");
-    fs::write(&library, "library(test) {}\n").unwrap();
+    support::executable(&paper, include_str!("fixtures/paper.sh"));
     let output_dir = root.path().join("output");
     let perf = root.path().join("perf");
-    fs::write(&perf, include_str!("fixtures/perf.sh")).unwrap();
-    fs::set_permissions(&perf, fs::Permissions::from_mode(0o755)).unwrap();
+    support::executable(&perf, include_str!("fixtures/perf.sh"));
     let suite = McmSuite::new(
         CoefficientSets::Explicit(vec![vec![3, -11]]),
-        CellLibrary::from_path(library).unwrap(),
+        CellLibrary::new("library(test) {}\n"),
         PaperTool { executable: paper },
     );
     let mut provider = YosysProvider {
         git: GitManager::new(output_dir.join("source"), "main", None)
-            .with_remote(repository.as_os_str()),
+            .with_remote(repository.path().as_os_str()),
         builder: CcacheCMakeBuilder::new(output_dir.join("ccache")).with_suppressed_stdout(),
         output_dir: output_dir.join("builds"),
     };
@@ -152,6 +108,6 @@ fn experiment_builds_two_revisions_and_runs_composed_mcm_without_storage() {
     );
     let directory = Path::new(report["directory"].as_str().unwrap());
     assert_eq!(fs::read_dir(directory).unwrap().count(), 0);
-    assert!(git(&repository, &["status", "--porcelain"]).is_empty());
-    assert_eq!(git(&repository, &["rev-parse", "HEAD"]), second);
+    assert!(repository.git(&["status", "--porcelain"]).is_empty());
+    assert_eq!(repository.git(&["rev-parse", "HEAD"]), second);
 }

@@ -1,5 +1,6 @@
 use super::*;
 use crate::experiment::ArtifactPolicy;
+use std::fs;
 
 fn job() -> YosysJob {
     YosysJob {
@@ -13,12 +14,7 @@ fn job() -> YosysJob {
 }
 
 #[test]
-fn preparation_stages_ordered_files_options_and_headers() {
-    let root = tempfile::tempdir().unwrap();
-    let mut context = RunContext::new(root.path().into(), ArtifactPolicy::new(false, false, false));
-    let runner = YosysRunner {
-        executable: "/bin/true".into(),
-    };
+fn compilation_stages_ordered_files_options_and_headers() {
     let mut job = job();
     job.design.files.push(SourceFile::new(
         "second file.sv",
@@ -33,31 +29,29 @@ fn preparation_stages_ordered_files_options_and_headers() {
         .options
         .defines
         .insert("WIDTH".into(), Some("8".into()));
-    let prepared = runner.prepare(&job, &mut context).unwrap();
+    let plan = job.compile().unwrap();
     assert!(
-        prepared
-            .directory
-            .path()
-            .join("include dir/header.vh")
-            .is_file()
+        plan.files()
+            .iter()
+            .any(|file| file.path == Path::new("include dir/header.vh"))
     );
-    assert!(prepared.script.contains("-sv"));
-    assert!(prepared.script.contains("-DWIDTH=8"));
-    assert!(prepared.script.contains("-I.yosys-includes/0"));
-    assert!(prepared.script.contains("\"rtl/top.v\" \"second file.sv\""));
-    assert!(!prepared.script.contains("header.vh"));
-    assert!(!prepared.script.contains("write_verilog"));
-    drop(prepared);
-    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+    assert!(plan.script().contains("-sv"));
+    assert!(plan.script().contains("-DWIDTH=8"));
+    assert!(plan.script().contains("-I.yosys-includes/0"));
+    assert!(plan.script().contains("\"rtl/top.v\" \"second file.sv\""));
+    assert!(!plan.script().contains("header.vh"));
+    assert!(!plan.script().contains("write_verilog"));
+    assert_eq!(
+        plan.includes(),
+        &[(
+            PathBuf::from(".yosys-includes/0"),
+            PathBuf::from("../include dir")
+        )]
+    );
 }
 
 #[test]
-fn preparation_rejects_escaping_and_conflicting_paths() {
-    let root = tempfile::tempdir().unwrap();
-    let mut context = RunContext::new(root.path().into(), ArtifactPolicy::new(false, false, false));
-    let runner = YosysRunner {
-        executable: "/bin/true".into(),
-    };
+fn compilation_rejects_escaping_and_conflicting_paths() {
     for path in [
         "../outside.v",
         "/outside.v",
@@ -68,9 +62,74 @@ fn preparation_rejects_escaping_and_conflicting_paths() {
     ] {
         let mut job = job();
         job.assets.push(SourceFile::new(path, "conflict"));
-        assert!(runner.prepare(&job, &mut context).is_err(), "{path}");
-        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+        assert!(job.compile().is_err(), "{path}");
     }
+}
+
+#[test]
+fn captured_logs_and_timings_decode_without_a_workspace() {
+    let mut job = job();
+    job.stage("opt", vec!["opt".into()]).unwrap();
+    job.timings = true;
+    let plan = job.compile().unwrap();
+    let capture = || YosysCapture {
+        process: ProcessOutput {
+            output: crate::test_support::output(0, b"", b""),
+            elapsed: Duration::from_millis(2),
+            perf: None,
+        },
+        files: BTreeMap::from([
+            (PathBuf::from("opt.log"), b"optimized".to_vec()),
+            (
+                PathBuf::from("timing.json"),
+                br#"{"passes":{"opt":{"runtime_ns":1234}}}"#.to_vec(),
+            ),
+        ]),
+    };
+    let run = YosysRun::decode(&plan, capture()).unwrap();
+    assert_eq!(run.log("opt").unwrap(), "optimized");
+    assert_eq!(run.pass_time("opt").unwrap(), Duration::from_nanos(1234));
+    for (name, contents) in [
+        ("opt.log", None),
+        ("timing.json", None),
+        ("opt.log", Some(vec![255])),
+        ("timing.json", Some(b"bad JSON".to_vec())),
+    ] {
+        let mut captured = capture();
+        match contents {
+            Some(bytes) => {
+                captured.files.insert(name.into(), bytes);
+            }
+            None => {
+                captured.files.remove(Path::new(name));
+            }
+        }
+        assert!(YosysRun::decode(&plan, captured).is_err(), "{name}");
+    }
+}
+
+#[test]
+fn materialization_writes_the_compiled_files_and_cleans_up() {
+    let root = tempfile::tempdir().unwrap();
+    let mut job = job();
+    job.design.options.include_dirs.push("empty include".into());
+    let plan = job.compile().unwrap();
+    let mut context = RunContext::new(root.path().into(), ArtifactPolicy::new(false, false, false));
+    let prepared = YosysRunner {
+        executable: "unused".into(),
+    }
+    .materialize(plan.clone(), &mut context)
+    .unwrap();
+    for file in plan.files() {
+        assert_eq!(
+            fs::read_to_string(prepared.directory.path().join(&file.path)).unwrap(),
+            file.source
+        );
+    }
+    assert!(prepared.directory.path().join("empty include").is_dir());
+    assert!(prepared.directory.path().join(".yosys-includes/0").is_dir());
+    drop(prepared);
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
 }
 
 #[test]

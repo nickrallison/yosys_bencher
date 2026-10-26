@@ -11,12 +11,17 @@ pub struct ExternalTool {
     pub executable: PathBuf,
 }
 
+impl ExecutableId {
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self(format!("{:x}", Sha256::digest(bytes)))
+    }
+}
+
 impl ExternalTool {
     pub fn identity(&self) -> std::io::Result<ExecutableId> {
-        Ok(ExecutableId(format!(
-            "{:x}",
-            Sha256::digest(fs::read(super::executable(&self.executable)?)?)
-        )))
+        Ok(ExecutableId::from_bytes(&fs::read(super::executable(
+            &self.executable,
+        )?)?))
     }
 
     pub fn resolved(&self) -> std::io::Result<Self> {

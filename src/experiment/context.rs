@@ -1,14 +1,15 @@
 use std::{
-    fs,
     path::PathBuf,
-    process::{Command, Output, Stdio},
-    time::{Duration, Instant},
+    process::{Command, Output},
+    rc::Rc,
+    time::Duration,
 };
 
 use serde::{Deserialize, Serialize};
 
-use super::ExperimentError;
-use crate::tools::perf::{PerfMeasurements, PerfProfiler, PerfStat};
+use super::artifacts::ArtifactWriter;
+use super::{ExperimentError, OsProcessExecutor, ProcessExecutor};
+use crate::tools::perf::{PerfAvailability, PerfMeasurements, PerfProfiler};
 
 #[derive(Debug)]
 pub struct ProcessOutput {
@@ -43,7 +44,9 @@ pub struct RunContext {
     workspace: PathBuf,
     artifacts: ArtifactPolicy,
     perf: Option<PerfProfiler>,
-    perf_counters: Option<PerfStat>,
+    perf_counters: PerfAvailability,
+    #[getset(skip)]
+    executor: Rc<dyn ProcessExecutor>,
     processes: usize,
     sample_index: u32,
     diagnostics: Vec<String>,
@@ -55,7 +58,8 @@ impl RunContext {
             workspace,
             artifacts,
             perf: None,
-            perf_counters: None,
+            perf_counters: PerfAvailability::Disabled,
+            executor: Rc::new(OsProcessExecutor),
             processes: 0,
             sample_index: 0,
             diagnostics: Vec::new(),
@@ -67,9 +71,18 @@ impl RunContext {
         self
     }
 
-    pub fn with_perf_counters(mut self, perf: Option<PerfStat>) -> Self {
+    pub fn with_perf_counters(mut self, perf: PerfAvailability) -> Self {
         self.perf_counters = perf;
         self
+    }
+
+    pub fn with_executor(mut self, executor: impl ProcessExecutor + 'static) -> Self {
+        self.executor = Rc::new(executor);
+        self
+    }
+
+    pub(crate) fn artifact_writer(&self) -> ArtifactWriter {
+        ArtifactWriter::new(self.workspace.clone())
     }
 
     pub fn with_sample_index(mut self, sample_index: u32) -> Self {
@@ -89,91 +102,25 @@ impl RunContext {
         command: &mut Command,
     ) -> Result<ProcessOutput, ExperimentError> {
         check_label(label)?;
-        fs::create_dir_all(&self.workspace)?;
-        if command.get_current_dir().is_none() {
-            command.current_dir(self.workspace.canonicalize()?);
-        }
-        let report = self.perf_report()?;
-        let mut wrapped = report
-            .as_ref()
-            .map(|(perf, file)| perf.command(command, file.path()));
-        let measured = wrapped.as_mut().unwrap_or(command);
-        measured.stdin(Stdio::null());
-        let description = format!("{measured:?}");
+        let perf = match &self.perf_counters {
+            PerfAvailability::Available(perf) => Some(perf),
+            _ => None,
+        };
+        let captured = self.executor.execute(command, &self.workspace, perf)?;
         let index = self.processes;
         self.processes += 1;
-        let start = Instant::now();
-        let output = measured
-            .output()
-            .map_err(|source| ExperimentError::CommandIo {
-                command: description.clone(),
-                source,
-            })?;
-        let elapsed = start.elapsed();
-        let perf = report.as_ref().and_then(|(_, file)| {
-            match fs::read_to_string(file.path())
-                .map_err(ExperimentError::from)
-                .and_then(|text| PerfMeasurements::parse(&text))
-            {
-                Ok(perf) => Some(perf),
-                Err(error) => {
-                    self.record_diagnostic("perf counters", Err(error));
-                    None
-                }
-            }
-        });
         if self.artifacts.logs {
-            let prefix = self.workspace.join(format!("process-{index:03}-{label}"));
-            let result = (|| -> Result<(), ExperimentError> {
-                fs::write(prefix.with_extension("stdout.log"), &output.stdout)?;
-                fs::write(prefix.with_extension("stderr.log"), &output.stderr)?;
-                fs::write(prefix.with_extension("command.log"), &description)?;
-                if let Some((_, file)) = &report {
-                    fs::copy(file.path(), prefix.with_extension("perf.json"))?;
-                }
-                Ok(())
-            })();
+            let result = self.artifact_writer().process(index, label, &captured);
             self.record_diagnostic(label, result);
         }
-        if !output.status.success() {
-            let detail = if output.stderr.is_empty() {
-                &output.stdout
-            } else {
-                &output.stderr
-            };
-            let detail = String::from_utf8_lossy(&detail[detail.len().saturating_sub(8192)..])
-                .trim()
-                .to_owned();
-            return Err(ExperimentError::Process {
-                command: description,
-                status: output.status,
-                detail,
-                stdout: output.stdout,
-                stderr: output.stderr,
-            });
+        if let PerfAvailability::Unavailable(reason) = &self.perf_counters {
+            self.diagnostics
+                .push(format!("perf counters unavailable: {reason}"));
+            self.perf_counters = PerfAvailability::Disabled;
         }
-        Ok(ProcessOutput {
-            output,
-            elapsed,
-            perf,
-        })
-    }
-
-    fn perf_report(
-        &mut self,
-    ) -> Result<Option<(PerfStat, tempfile::NamedTempFile)>, ExperimentError> {
-        let Some(perf) = self.perf_counters.clone() else {
-            return Ok(None);
-        };
-        if let Err(error) = perf.check() {
-            self.record_diagnostic("perf counters unavailable", Err(error));
-            self.perf_counters = None;
-            return Ok(None);
-        }
-        Ok(Some((
-            perf,
-            tempfile::NamedTempFile::new_in(&self.workspace)?,
-        )))
+        let (result, diagnostics) = captured.decode();
+        self.diagnostics.extend(diagnostics);
+        result
     }
 }
 

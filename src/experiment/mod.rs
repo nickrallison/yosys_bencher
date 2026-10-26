@@ -1,14 +1,16 @@
-use std::{fs, num::NonZeroU32, path::PathBuf};
+use std::{num::NonZeroU32, path::PathBuf};
 
 use crate::{
     src_manager::git::history::RevisionSelection,
     tools::perf::{PerfProfiler, PerfStat},
 };
 
+mod artifacts;
 mod attempt;
 mod benchmark;
 mod context;
 mod error;
+mod process;
 mod provider;
 mod reference;
 mod result;
@@ -18,8 +20,11 @@ pub use benchmark::{BenchmarkIn, BenchmarkOut, Procedure, ProcedureId};
 pub(crate) use context::check_label;
 pub use context::{ArtifactPolicy, ProcessOutput, RunContext};
 pub use error::ExperimentError;
+pub use process::{OsProcessExecutor, ProcessCapture, ProcessExecutor};
 pub use provider::{ToolProvider, YosysProvider};
-pub use reference::{Reference, ReferenceSession};
+pub use reference::{
+    Reference, ReferenceCache, ReferenceMetadata, ReferenceObservation, ReferenceSession,
+};
 pub use result::{Attempt, AttemptOutcome, AttemptRecord, RevisionFailure, RunReport};
 pub use suite::{CmpSuite, Suite, SuiteDefinition, Version};
 
@@ -90,18 +95,23 @@ impl<S: Suite> Experiment<S> {
         previous: Option<&DefinitionFor<S>>,
     ) -> Result<ReportFor<S>, ExperimentError> {
         check_label(self.suite.name())?;
-        let mut definition = self.suite.definition()?;
+        let session = self.suite.begin()?;
+        let mut definition = self.suite.definition(&session)?;
         if let Some(previous) = previous {
+            let next = definition.next_version(previous);
+            if definition.compare(previous) == CmpSuite::Incompatible {
+                log::warn!(
+                    "incompatible suite change; bumping major version from {}.{} to {}.0",
+                    previous.version().major(),
+                    previous.version().minor(),
+                    next.major()
+                );
+            }
             definition = definition.with_previous(previous);
         }
-        let session = self.suite.begin()?;
+        let settings = attempt::RunSettings::prepare(options);
         let revisions = provider.revisions(&self.revs)?;
-        fs::create_dir_all(&self.output_dir)?;
-        let directory = tempfile::Builder::new()
-            .prefix(&format!("{}-", self.suite.name()))
-            .tempdir_in(&self.output_dir)?
-            .keep()
-            .canonicalize()?;
+        let directory = attempt::invocation_directory(self.suite.name(), &self.output_dir)?;
         let mut attempts = Vec::new();
         let mut revision_failures = Vec::new();
         for (revision_index, revision) in revisions.into_iter().enumerate() {
@@ -124,7 +134,7 @@ impl<S: Suite> Experiment<S> {
                         self.suite.procedure(),
                         input,
                         &tools,
-                        options,
+                        &settings,
                         &directory,
                         &format!("attempt-{revision_index:04}-{input_index:04}-{sample_index:04}-"),
                         sample_index,

@@ -22,6 +22,10 @@ impl PaperSession {
         Ok(Self(ReferenceSession::new(tool)?))
     }
 
+    pub fn identity(&self) -> PaperToolId {
+        self.0.identity()
+    }
+
     pub(super) fn validate_identity(&self, identity: &PaperToolId) -> Result<()> {
         self.0.validate_identity(identity)
     }

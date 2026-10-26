@@ -8,7 +8,7 @@ use crate::{
         CellLibrary, TimingConfig, TimingInput, TimingOutput, YosysBenchmark, YosysProcedure,
         design::{Design, SourceFile},
     },
-    tools::yosys::{Yosys, YosysRun},
+    tools::yosys::YosysRun,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -67,7 +67,7 @@ impl Suite for GeneratedSuite {
         &self.procedure
     }
 
-    fn inputs(&self) -> Result<Vec<Input>, ExperimentError> {
+    fn inputs(&self, _session: &Self::Session) -> Result<Vec<Input>, ExperimentError> {
         Ok(vec![Input(vec![self.coefficient.get()])])
     }
 
@@ -170,9 +170,9 @@ fn each_invocation_uses_current_generation_and_records_actual_inputs() {
         coefficient: Cell::new(7),
         procedure: TestProcedure,
     };
-    let first = suite.definition().unwrap();
+    let first = suite.definition(&()).unwrap();
     suite.coefficient.set(11);
-    let second = suite.definition().unwrap();
+    let second = suite.definition(&()).unwrap();
 
     assert_eq!(first.inputs(), &[Input(vec![7])]);
     assert_eq!(second.inputs(), &[Input(vec![11])]);
@@ -197,7 +197,7 @@ fn equal_inputs_can_have_different_outputs_and_outcomes() {
     let third = suite.procedure().run(&input, &tools, &mut context).unwrap();
 
     assert_ne!(first.runtime(), third.runtime());
-    assert_eq!(suite.definition().unwrap().inputs(), &[input]);
+    assert_eq!(suite.definition(&()).unwrap().inputs(), &[input]);
 }
 
 struct InspectYosys;
@@ -235,20 +235,8 @@ fn yosys_adapter_keeps_tools_out_of_workload_identity() {
         TimingConfig::new(vec!["stat".into()]),
     );
     let procedure = YosysBenchmark::new(InspectYosys);
-    let temporary = tempfile::tempdir().unwrap();
-    let mut context = RunContext::new(
-        temporary.path().join("workspace"),
-        ArtifactPolicy::new(false, false, false),
-    );
-    for name in ["revision-a", "revision-b"] {
-        use std::os::unix::fs::PermissionsExt;
-        let path = temporary.path().join(name);
-        std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        procedure
-            .run(&input, &Yosys::new(path), &mut context)
-            .unwrap();
-    }
+    let plan = InspectYosys.job(&input).unwrap().compile().unwrap();
+    assert!(plan.script().contains("top.v"));
     let recorded: TimingInput =
         serde_json::from_str(&serde_json::to_string(&input).unwrap()).unwrap();
     assert_eq!(recorded, input);
@@ -329,7 +317,7 @@ impl Suite for InvocationSuite {
     fn procedure(&self) -> &InvocationProcedure {
         &self.procedure
     }
-    fn inputs(&self) -> Result<Vec<Input>, ExperimentError> {
+    fn inputs(&self, _session: &Self::Session) -> Result<Vec<Input>, ExperimentError> {
         Ok((self.generated.get()..self.generated.get() + 3)
             .map(|v| Input(vec![v]))
             .collect())

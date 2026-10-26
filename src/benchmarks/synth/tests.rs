@@ -117,19 +117,8 @@ fn real_synthesis_counts_hierarchy_and_maps_flip_flops() {
 
 #[test]
 fn unmapped_internal_cells_do_not_produce_partial_area() {
-    use crate::{experiment::ProcessOutput, tools::yosys::YosysRun};
-    use std::{collections::BTreeMap, process::Command, time::Duration};
-    let process = ProcessOutput {
-        output: Command::new("true").output().unwrap(),
-        elapsed: Duration::ZERO,
-        perf: None,
-    };
-    let run = YosysRun {
-        process,
-        stage_logs: BTreeMap::from([("stat".into(), r#"{"modules":{"top":{"num_cells":2,"area":3.0,"num_cells_by_type":{"NAND2_X1":1,"$_DFF_P_":1}}}}"#.into())]),
-        pass_timings: HashMap::new(),
-    };
-    let measurements = SynthMeasurements::parse(&run).unwrap();
+    let stats = crate::tools::yosys::Statistics::parse(r#"{"modules":{"top":{"num_cells":2,"area":3.0,"num_cells_by_type":{"NAND2_X1":1,"$_DFF_P_":1}}}}"#).unwrap();
+    let measurements = SynthMeasurements::from_statistics(stats);
     assert_eq!(measurements.area, None);
     assert_eq!(measurements.cell_count.len(), 2);
 }

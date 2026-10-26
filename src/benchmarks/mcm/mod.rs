@@ -174,8 +174,8 @@ impl Suite for McmSuite {
     fn procedure(&self) -> &McmProcedure {
         &self.procedure
     }
-    fn inputs(&self) -> Result<Vec<McmInput>> {
-        let identity = self.paper.identity()?;
+    fn inputs(&self, session: &Rc<PaperSession>) -> Result<Vec<McmInput>> {
+        let identity = session.identity();
         Ok(self
             .coefficient_sets
             .generate()?

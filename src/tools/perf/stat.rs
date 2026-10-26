@@ -2,7 +2,6 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::{Arc, OnceLock},
     time::Duration,
 };
 
@@ -136,7 +135,29 @@ impl BenchmarkOut for PerfMeasurements {
 #[derive(Debug, Clone)]
 pub struct PerfStat {
     executable: PathBuf,
-    availability: Arc<OnceLock<Result<(), String>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedPerfStat {
+    executable: PathBuf,
+}
+
+#[derive(Debug, Clone, Default)]
+pub enum PerfAvailability {
+    #[default]
+    Disabled,
+    Available(PreparedPerfStat),
+    Unavailable(String),
+}
+
+impl PerfAvailability {
+    pub fn prepare(perf: Option<&PerfStat>) -> Self {
+        match perf.map(PerfStat::prepare) {
+            None => Self::Disabled,
+            Some(Ok(perf)) => Self::Available(perf),
+            Some(Err(error)) => Self::Unavailable(error.to_string()),
+        }
+    }
 }
 
 impl Default for PerfStat {
@@ -149,25 +170,20 @@ impl PerfStat {
     pub fn new(executable: impl Into<PathBuf>) -> Self {
         Self {
             executable: executable.into(),
-            availability: Arc::default(),
         }
     }
 
-    pub fn check(&self) -> Result<(), ExperimentError> {
-        self.availability
-            .get_or_init(|| self.probe().map_err(|error| error.to_string()))
-            .clone()
-            .map_err(ExperimentError::Profiling)
-    }
-
-    fn probe(&self) -> Result<(), ExperimentError> {
+    pub fn prepare(&self) -> Result<PreparedPerfStat, ExperimentError> {
         if !cfg!(target_os = "linux") {
             return Err(ExperimentError::Profiling(
                 "perf counters require Linux".into(),
             ));
         }
+        let prepared = PreparedPerfStat {
+            executable: crate::tools::executable(&self.executable)?,
+        };
         let report = tempfile::NamedTempFile::new()?;
-        let output = self
+        let output = prepared
             .command(&Command::new("true"), report.path())
             .output()?;
         if !output.status.success() {
@@ -183,9 +199,11 @@ impl PerfStat {
         {
             return Err(ExperimentError::Profiling("no usable perf counters".into()));
         }
-        Ok(())
+        Ok(prepared)
     }
+}
 
+impl PreparedPerfStat {
     pub(crate) fn command(&self, command: &Command, report: &Path) -> Command {
         let mut wrapped = Command::new(&self.executable);
         wrapped
@@ -214,13 +232,12 @@ impl PerfStat {
 mod tests {
     use super::*;
     use crate::experiment::{ArtifactPolicy, RunContext, RunOptions};
-    use std::os::unix::fs::PermissionsExt;
+    use crate::test_support::executable;
 
     fn collector(root: &Path) -> PerfStat {
-        let executable = root.join("perf");
-        fs::write(&executable, include_str!("../../../tests/fixtures/perf.sh")).unwrap();
-        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
-        PerfStat::new(executable)
+        let path = root.join("perf");
+        executable(&path, include_str!("../../../tests/fixtures/perf.sh"));
+        PerfStat::new(path)
     }
 
     #[test]
@@ -231,7 +248,7 @@ mod tests {
             root.path().join("workspace"),
             ArtifactPolicy::new(true, false, false),
         )
-        .with_perf_counters(Some(collector(root.path())));
+        .with_perf_counters(PerfAvailability::prepare(Some(&collector(root.path()))));
         let output = context.run_process("measured", Command::new("sh")
             .args(["-c", "test \"$BENCH_PERF_TEST\" = 'kept value' || exit 3; test \"${RUST_BACKTRACE+x}\" != x || exit 4; printf child-output; printf child-error >&2; echo ran >> executions"])
             .env("BENCH_PERF_TEST", "kept value").env_remove("RUST_BACKTRACE")).unwrap();
@@ -250,7 +267,11 @@ mod tests {
             "ran\n"
         );
         assert_eq!(*context.processes(), 1);
-        assert!(context.diagnostics().is_empty(), "{:?}", context.diagnostics());
+        assert!(
+            context.diagnostics().is_empty(),
+            "{:?}",
+            context.diagnostics()
+        );
         assert!(
             context
                 .workspace()
@@ -274,7 +295,7 @@ mod tests {
                 root.path().join(name),
                 ArtifactPolicy::new(false, false, false),
             )
-            .with_perf_counters(perf);
+            .with_perf_counters(PerfAvailability::prepare(perf.as_ref()));
             for _ in 0..2 {
                 let output = context
                     .run_process(
@@ -303,7 +324,7 @@ mod tests {
             root.path().join("workspace"),
             ArtifactPolicy::new(false, false, false),
         )
-        .with_perf_counters(Some(collector(root.path())));
+        .with_perf_counters(PerfAvailability::prepare(Some(&collector(root.path()))));
         let result = context.run_process(
             "failing",
             Command::new("sh").args(["-c", "echo ran >> executions; echo failure >&2; exit 7"]),
@@ -315,7 +336,11 @@ mod tests {
             fs::read_to_string(context.workspace().join("executions")).unwrap(),
             "ran\n"
         );
-        assert!(context.diagnostics().is_empty(), "{:?}", context.diagnostics());
+        assert!(
+            context.diagnostics().is_empty(),
+            "{:?}",
+            context.diagnostics()
+        );
     }
 
     #[test]
@@ -345,7 +370,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut context =
             RunContext::new(root.path().into(), ArtifactPolicy::new(false, false, false))
-                .with_perf_counters(RunOptions::default().perf_counters);
+                .with_perf_counters(PerfAvailability::prepare(
+                    RunOptions::default().perf_counters.as_ref(),
+                ));
         let output = context
             .run_process("real", Command::new("sh").args(["-c", "printf measured"]))
             .unwrap();

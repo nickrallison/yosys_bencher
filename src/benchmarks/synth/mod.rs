@@ -140,7 +140,10 @@ impl SynthFlow {
 
 impl SynthMeasurements {
     pub fn parse(output: &YosysRun) -> Result<Self> {
-        let stats = output.statistics("stat")?;
+        Ok(Self::from_statistics(output.statistics("stat")?))
+    }
+
+    pub fn from_statistics(stats: crate::tools::yosys::Statistics) -> Self {
         let area = if stats.cell_count.keys().any(|name| name.starts_with('$')) {
             None
         } else if stats.cell_count.is_empty() {
@@ -148,10 +151,10 @@ impl SynthMeasurements {
         } else {
             stats.area
         };
-        Ok(Self {
+        Self {
             area,
             cell_count: stats.cell_count,
-        })
+        }
     }
 }
 
@@ -207,7 +210,7 @@ impl Suite for SynthSuite {
     fn procedure(&self) -> &Self::Procedure {
         &self.procedure
     }
-    fn inputs(&self) -> Result<Vec<SynthInput>> {
+    fn inputs(&self, _session: &()) -> Result<Vec<SynthInput>> {
         Ok(self
             .designs
             .iter()

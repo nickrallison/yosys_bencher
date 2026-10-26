@@ -5,16 +5,12 @@ use crate::{
 };
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::Command,
     time::Duration,
 };
 
-fn tool(path: &Path, script: &str) {
-    fs::write(path, script).unwrap();
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
-}
+use crate::test_support::executable as tool;
 
 const YOSYS: &str = include_str!("../../../tests/fixtures/yosys.sh");
 const PAPER: &str = include_str!("../../../tests/fixtures/paper.sh");
@@ -61,7 +57,7 @@ impl Fixture {
         let workspace = tempfile::tempdir_in(self.root.path()).unwrap();
         let mut context =
             RunContext::new(workspace.path().into(), policy).with_sample_index(sample_index);
-        let input = self.suite.inputs()?.remove(0);
+        let input = self.suite.inputs(session)?.remove(0);
         let output = McmProcedure.run(
             &input,
             &self.suite.tools(&self.yosys, session)?,
@@ -190,10 +186,10 @@ fn reference_key_includes_coefficients_width_seed_and_sample_index() {
     fixture.suite.input_width = 16;
     let (width, _) = fixture.run(&session, no_artifacts()).unwrap();
     assert_ne!(width.reference.id, seed.reference.id);
-    let input = fixture.suite.inputs().unwrap().remove(0);
+    let input = fixture.suite.inputs(&session).unwrap().remove(0);
     let (sample, _) = fixture.run_sample(&session, no_artifacts(), 1).unwrap();
     assert_ne!(sample.reference.id, width.reference.id);
-    assert_eq!(fixture.suite.inputs().unwrap()[0], input);
+    assert_eq!(fixture.suite.inputs(&session).unwrap()[0], input);
     let (cached, _) = fixture.run_sample(&session, no_artifacts(), 1).unwrap();
     assert_eq!(cached.reference.id, sample.reference.id);
     tool(
@@ -283,7 +279,7 @@ fn diagnostic_failures_preserve_successful_measurements() {
     )
     .unwrap();
     let session = fixture.suite.begin().unwrap();
-    let input = fixture.suite.inputs().unwrap().remove(0);
+    let input = fixture.suite.inputs(&session).unwrap().remove(0);
     let tools = fixture.suite.tools(&fixture.yosys, &session).unwrap();
     let workspace = tempfile::tempdir().unwrap();
     let mut context = RunContext::new(
@@ -308,7 +304,7 @@ fn diagnostic_failures_preserve_successful_measurements() {
 fn failed_and_unsupported_processes_preserve_diagnostics_and_clean_scratch() {
     let fixture = Fixture::new();
     let session = fixture.suite.begin().unwrap();
-    let input = fixture.suite.inputs().unwrap().remove(0);
+    let input = fixture.suite.inputs(&session).unwrap().remove(0);
     let tools = fixture.suite.tools(&fixture.yosys, &session).unwrap();
     let workspace = tempfile::tempdir().unwrap();
     let mut context = RunContext::new(
@@ -341,9 +337,16 @@ fn failed_and_unsupported_processes_preserve_diagnostics_and_clean_scratch() {
 
 #[test]
 fn signed_generation_and_paper_validation_match_v1() {
-    let fixture = Fixture::new();
-    let mut input = fixture.suite.inputs().unwrap().remove(0);
-    input.coefficients = vec![3, -11, i32::MAX as i64, -i32::MAX as i64];
+    let mut input = McmInput {
+        coefficients: vec![3, -11, i32::MAX as i64, -i32::MAX as i64],
+        input_width: 32,
+        options: McmOptions::default(),
+        synthesis: crate::benchmarks::synth::SynthConfig::new(
+            CellLibrary::new("library(test) {}"),
+            Vec::new(),
+        ),
+        paper_identity: PaperToolId::from_bytes(b"paper"),
+    };
     input.validate().unwrap();
     let source = design::verilog(&input).unwrap();
     for expression in [
@@ -406,7 +409,7 @@ fn real_comparison_and_signed_arithmetic() {
     suite.options.search_budget = 1000;
     let session = suite.begin().unwrap();
     let tools = suite.tools(&Yosys::new(&yosys), &session).unwrap();
-    let mut input = suite.inputs().unwrap().remove(0);
+    let mut input = suite.inputs(&session).unwrap().remove(0);
     let workspace = tempfile::tempdir().unwrap();
     let mut context = RunContext::new(
         workspace.path().into(),

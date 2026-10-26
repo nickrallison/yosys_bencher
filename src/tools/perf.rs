@@ -10,7 +10,7 @@ use serde::Serialize;
 use crate::experiment::ExperimentError;
 
 mod stat;
-pub use stat::{PerfCounter, PerfMeasurements, PerfStat};
+pub use stat::{PerfAvailability, PerfCounter, PerfMeasurements, PerfStat, PreparedPerfStat};
 
 /// Tools for diagnostic recordings, kept separate from benchmark timing samples.
 #[derive(Debug, Clone, Serialize, Getters)]

@@ -37,7 +37,10 @@ pub trait Suite {
 
     fn name(&self) -> &str;
     fn procedure(&self) -> &Self::Procedure;
-    fn inputs(&self) -> Result<Vec<<Self::Procedure as Procedure>::Input>, ExperimentError>;
+    fn inputs(
+        &self,
+        session: &Self::Session,
+    ) -> Result<Vec<<Self::Procedure as Procedure>::Input>, ExperimentError>;
     fn begin(&self) -> Result<Self::Session, ExperimentError>;
     fn tools(
         &self,
@@ -47,10 +50,11 @@ pub trait Suite {
 
     fn definition(
         &self,
+        session: &Self::Session,
     ) -> Result<SuiteDefinition<<Self::Procedure as Procedure>::Input>, ExperimentError> {
         SuiteDefinition::new(
             ProcedureId::new(self.procedure().name(), Version::default()),
-            self.inputs()?,
+            self.inputs(session)?,
         )
     }
 }
@@ -103,14 +107,7 @@ impl<I: BenchmarkIn> SuiteDefinition<I> {
         match self.compare(previous) {
             CmpSuite::Eq => version,
             CmpSuite::Superset => Version::new(version.major, version.minor + 1),
-            CmpSuite::Incompatible => {
-                let next = Version::new(version.major + 1, 0);
-                log::warn!(
-                    "incompatible suite change; bumping major version from {}.{} to {}.0",
-                    version.major, version.minor, next.major
-                );
-                next
-            }
+            CmpSuite::Incompatible => Version::new(version.major + 1, 0),
         }
     }
 }
