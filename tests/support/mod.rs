@@ -13,6 +13,10 @@ pub fn required<T>(result: Result<T, impl std::fmt::Display>) -> T {
     })
 }
 
+fn mcm_test_tools() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("target/test-tools/mcm")
+}
+
 pub fn tool(name: &str, override_env: Option<&str>) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let path = PathBuf::from(
@@ -20,13 +24,16 @@ pub fn tool(name: &str, override_env: Option<&str>) -> PathBuf {
             .and_then(std::env::var_os)
             .unwrap_or_else(|| name.into()),
     );
-    let candidates = if path.components().count() == 1 {
+    let mut candidates = if path.components().count() == 1 {
         std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
             .map(|directory| directory.join(&path))
             .collect()
     } else {
         vec![path.clone()]
     };
+    if override_env == Some("MCM_PAPER") && std::env::var_os("MCM_PAPER").is_none() {
+        candidates.push(mcm_test_tools().join("acm"));
+    }
     required(
         candidates
             .into_iter()
@@ -40,20 +47,39 @@ pub fn tool(name: &str, override_env: Option<&str>) -> PathBuf {
                 let hint = override_env
                     .map(|variable| format!(" or set {variable}"))
                     .unwrap_or_default();
-                format!("missing test tool {}; install {name}{hint}", path.display())
+                let setup = if override_env == Some("MCM_PAPER") {
+                    "; test defaults: bash tests/setup-mcm.sh"
+                } else {
+                    ""
+                };
+                format!(
+                    "missing test tool {}; install {name}{hint}{setup}",
+                    path.display()
+                )
             }),
     )
 }
 
 pub fn file(variable: &str) -> PathBuf {
-    let path =
-        PathBuf::from(required(std::env::var_os(variable).ok_or_else(|| {
-            format!("set {variable} to the required test input file")
-        })));
-    required(
-        path.canonicalize()
-            .map_err(|error| format!("{variable}={}: {error}", path.display())),
-    )
+    let path = PathBuf::from(required(
+        std::env::var_os(variable)
+            .or_else(|| {
+                (variable == "MCM_LIBERTY").then(|| {
+                    mcm_test_tools()
+                        .join("NangateOpenCellLibrary_typical.lib")
+                        .into_os_string()
+                })
+            })
+            .ok_or_else(|| format!("set {variable} to the required test input file")),
+    ));
+    required(path.canonicalize().map_err(|error| {
+        let setup = if variable == "MCM_LIBERTY" {
+            "; test defaults: bash tests/setup-mcm.sh"
+        } else {
+            ""
+        };
+        format!("{variable}={}: {error}{setup}", path.display())
+    }))
 }
 
 pub fn output(code: i32, stdout: &[u8], stderr: &[u8]) -> Output {
