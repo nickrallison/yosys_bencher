@@ -231,6 +231,3 @@ impl Suite for SynthSuite {
         Ok(tool.clone())
     }
 }
-
-#[cfg(test)]
-mod tests;

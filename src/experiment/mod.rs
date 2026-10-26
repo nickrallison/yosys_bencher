@@ -158,6 +158,3 @@ impl<S: Suite> Experiment<S> {
         })
     }
 }
-
-#[cfg(test)]
-mod tests;

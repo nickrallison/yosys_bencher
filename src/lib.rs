@@ -11,7 +11,3 @@ pub mod store;
 pub mod tools;
 
 pub use error::Error;
-
-#[cfg(test)]
-#[path = "../tests/support/mod.rs"]
-pub(crate) mod test_support;

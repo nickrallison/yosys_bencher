@@ -124,3 +124,6 @@ impl<'de, I: BenchmarkIn> Deserialize<'de> for SuiteDefinition<I> {
         Self::new(definition.procedure, definition.inputs).map_err(D::Error::custom)
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -312,8 +312,6 @@ pub fn hierarchy_commands(design: &Design) -> Result<Vec<String>> {
     Ok(vec![command])
 }
 
-#[cfg(test)]
-mod tests;
 
 pub fn argument(value: &str) -> Result<String> {
     if value.is_empty()

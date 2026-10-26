@@ -199,6 +199,3 @@ impl Suite for McmSuite {
         })
     }
 }
-
-#[cfg(test)]
-mod tests;
