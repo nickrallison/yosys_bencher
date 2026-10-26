@@ -1,9 +1,4 @@
-use std::{
-    cell::RefCell,
-    hash::Hash,
-    sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{cell::RefCell, hash::Hash, time::SystemTime};
 
 use contracts::contract_trait;
 use serde::{Deserialize, Serialize};
@@ -21,11 +16,9 @@ type Result<T> = std::result::Result<T, ExperimentError>;
 mod cache;
 pub use cache::{ReferenceCache, ReferenceMetadata, ReferenceObservation};
 
-static SESSION: AtomicU64 = AtomicU64::new(0);
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reference<M> {
-    pub id: String,
+    pub id: usize,
     pub executable: ExecutableId,
     pub measured_at: SystemTime,
     pub os: String,
@@ -63,15 +56,6 @@ impl<K: Eq + Hash, M: Clone> ReferenceSession<K, M> {
         let tool = tool.resolved()?;
         let metadata = ReferenceMetadata {
             executable: tool.identity()?,
-            scope: format!(
-                "{}-{}-{}",
-                std::process::id(),
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos(),
-                SESSION.fetch_add(1, Ordering::Relaxed)
-            ),
             os: std::env::consts::OS.into(),
             arch: std::env::consts::ARCH.into(),
         };

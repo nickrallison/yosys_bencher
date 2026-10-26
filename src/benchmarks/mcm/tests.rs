@@ -3,12 +3,7 @@ use crate::{
     experiment::{ArtifactPolicy, BenchmarkOut},
     metrics::MetricValue,
 };
-use std::{
-    fs,
-    path::PathBuf,
-    process::Command,
-    time::Duration,
-};
+use std::{fs, path::PathBuf, process::Command, time::Duration};
 
 use crate::test_support::executable as tool;
 
@@ -118,7 +113,7 @@ fn comparison_preserves_observations_and_reuses_references_only_within_session()
     );
     let fresh_session = fixture.suite.begin().unwrap();
     let (fresh, _) = fixture.run(&fresh_session, no_artifacts()).unwrap();
-    assert_ne!(first.reference.id, fresh.reference.id);
+    assert_eq!(fresh.reference.id, 0);
     assert_eq!(
         fixture
             .events()

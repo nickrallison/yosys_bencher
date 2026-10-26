@@ -2,7 +2,6 @@ use super::*;
 use std::collections::HashMap;
 
 pub struct ReferenceMetadata {
-    pub scope: String,
     pub executable: ExecutableId,
     pub os: String,
     pub arch: String,
@@ -55,7 +54,7 @@ impl<K: Eq + Hash, M: Clone> ReferenceCache<K, M> {
             return Ok(reference.clone());
         }
         let reference = Reference {
-            id: format!("{}:{}", self.metadata.scope, self.references.len()),
+            id: self.references.len(),
             executable: self.metadata.executable.clone(),
             os: self.metadata.os.clone(),
             arch: self.metadata.arch.clone(),
@@ -72,9 +71,8 @@ impl<K: Eq + Hash, M: Clone> ReferenceCache<K, M> {
 mod tests {
     use super::*;
 
-    fn cache(scope: &str) -> ReferenceCache<&str, u32> {
+    fn cache() -> ReferenceCache<&'static str, u32> {
         ReferenceCache::new(ReferenceMetadata {
-            scope: scope.into(),
             executable: ExecutableId::from_bytes(b"original"),
             os: "test".into(),
             arch: "test".into(),
@@ -82,8 +80,8 @@ mod tests {
     }
 
     #[test]
-    fn failures_are_not_stored_and_samples_and_scopes_are_distinct() {
-        let mut first = cache("first");
+    fn failures_are_not_stored_and_ids_are_local_to_each_cache() {
+        let mut first = cache();
         assert!(
             first
                 .record(
@@ -101,15 +99,17 @@ mod tests {
             })
         };
         let reference = first.record(("workload", 0), observation()).unwrap();
+        assert_eq!(reference.id, 0);
+        assert_eq!(reference.measured_at, SystemTime::UNIX_EPOCH);
         assert_eq!(first.get(&("workload", 0)).unwrap().id, reference.id);
         assert!(first.get(&("other", 0)).is_none());
         assert!(first.get(&("workload", 1)).is_none());
         let sample = first.record(("workload", 1), observation()).unwrap();
-        assert_ne!(reference.id, sample.id);
-        let fresh = cache("fresh")
-            .record(("workload", 0), observation())
-            .unwrap();
-        assert_ne!(reference.id, fresh.id);
+        assert_eq!(sample.id, 1);
+        let mut fresh = cache();
+        assert!(fresh.get(&("workload", 0)).is_none());
+        let fresh_reference = fresh.record(("workload", 0), observation()).unwrap();
+        assert_eq!(fresh_reference.id, 0);
         first
             .validate_identity(
                 &ExecutableId::from_bytes(b"original"),
