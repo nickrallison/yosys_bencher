@@ -26,7 +26,7 @@ Store API, use cases, version selection, and typed analysis boundary.
 
 | Use case                                | Required data or operation                                                                                                                |
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Add an experiment type                  | Implement a procedure and suite with typed, serializable inputs and outputs; declare the suite once for execution and typed reading                    |
+| Add an experiment type                  | Implement a procedure and suite with typed, serializable inputs and outputs; register the generic read adapter beside the procedure       |
 | Reuse execution logic                   | Compose existing synthesis, tool, measurement, and reference components, as MCM and synthesis already do                                  |
 | Make results appear in the UI           | Declare output metrics, units, descriptions, and supported reductions through shared interfaces, without benchmark-specific frontend code |
 | Make inputs searchable and groupable    | Declare input labels and typed parameter fields with supported filter and grouping operations                                             |
@@ -59,35 +59,35 @@ they do not require a separate two-commit comparison screen.
 
 ### UI users
 
-| Use case | Required data or operation |
-| --- | --- |
-| Read relative performance over time | Normalize each input to a selected baseline revision before combining inputs; show matched coverage and handle zero or absent baselines explicitly |
-| Find where a trend changed | Absolute or relative changes between adjacent selected revisions, with input matching and commit details; indicate gaps between measured commits |
-| Find the inputs behind a change | Rank per-input changes and, where the suite estimator permits it, their contributions to the aggregate; allow opening the raw measurements |
-| Distinguish broad changes from isolated regressions | Counts and distributions of improved, unchanged, and worsened inputs using a user-selected practical threshold and the metric's improvement direction |
-| See what the average hides | Median, selected percentiles, and worst inputs across per-input estimates at each revision; keep workload spread separate from repetition noise |
-| See how performance scales with input parameters | Group or plot estimates against width, coefficient count, design size, or other declared parameters, while controlling the remaining parameters |
-| Check whether a trend is caused by changing coverage | Recompute using a fixed common input set and show membership differences, failures, and missing metrics alongside the original view |
-| Explore relationships between metrics | Plot metrics such as runtime and area for the same input/revision/run estimates; retain grouping and provenance rather than correlating unrelated samples |
-| Inspect time versus result-quality tradeoffs | View runtime alongside area or another quality metric; later identify choices that improve one metric without worsening the others |
+| Use case                                             | Required data or operation                                                                                                                                |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Read relative performance over time                  | Normalize each input to a selected baseline revision before combining inputs; show matched coverage and handle zero or absent baselines explicitly        |
+| Find where a trend changed                           | Absolute or relative changes between adjacent selected revisions, with input matching and commit details; indicate gaps between measured commits          |
+| Find the inputs behind a change                      | Rank per-input changes and, where the suite estimator permits it, their contributions to the aggregate; allow opening the raw measurements                |
+| Distinguish broad changes from isolated regressions  | Counts and distributions of improved, unchanged, and worsened inputs using a user-selected practical threshold and the metric's improvement direction     |
+| See what the average hides                           | Median, selected percentiles, and worst inputs across per-input estimates at each revision; keep workload spread separate from repetition noise           |
+| See how performance scales with input parameters     | Group or plot estimates against width, coefficient count, design size, or other declared parameters, while controlling the remaining parameters           |
+| Check whether a trend is caused by changing coverage | Recompute using a fixed common input set and show membership differences, failures, and missing metrics alongside the original view                       |
+| Explore relationships between metrics                | Plot metrics such as runtime and area for the same input/revision/run estimates; retain grouping and provenance rather than correlating unrelated samples |
+| Inspect time versus result-quality tradeoffs         | View runtime alongside area or another quality metric; later identify choices that improve one metric without worsening the others                        |
 
 ### Experiment authors
 
-| Use case | Required data or operation |
-| --- | --- |
-| Evaluate an optimization against its baseline or reference | Extract baseline, optimized, and reference metrics from typed outputs; declare the ratio or savings formula and preserve reused reference observation identities |
-| Identify which phase became expensive | Phase-level measurements with stable identities and units; distinguish inclusive timings from disjoint phases before summing them |
-| Define an experiment-specific efficiency metric | Expose computed metrics, such as area saved per unit runtime, through `BenchmarkOut`; specify valid domains, units, and reduction order so generic analysis can use them |
+| Use case                                                   | Required data or operation                                                                                                                                               |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Evaluate an optimization against its baseline or reference | Extract baseline, optimized, and reference metrics from typed outputs; declare the ratio or savings formula and preserve reused reference observation identities         |
+| Identify which phase became expensive                      | Phase-level measurements with stable identities and units; distinguish inclusive timings from disjoint phases before summing them                                        |
+| Define an experiment-specific efficiency metric            | Expose computed metrics, such as area saved per unit runtime, through `BenchmarkOut`; specify valid domains, units, and reduction order so generic analysis can use them |
 
 ### Benchmark operators
 
-| Use case | Required data or operation |
-| --- | --- |
-| Find measurements that need more repetitions | Per-input counts, standard deviation, and raw distributions within each run; mark insufficient samples rather than treating them as stable |
-| Distinguish repetition noise from changes between invocations | Compare within-run variation with per-run estimates at the same revision/input, grouped by environment and execution options |
-| Spot drift during collection | Measurement timestamps and execution order within a fixed revision/input/configuration; inspect trends or outliers without automatically discarding them |
-| Track reliability across commits | Separate counts of success, failure, unsupported, unfinished, and unmeasured work against a fixed selected workload |
-| Allocate further measurements, later | Use missing coverage and a defined uncertainty target to suggest revision/input work items within a sample budget; retain the scheduling policy and decisions |
+| Use case                                                      | Required data or operation                                                                                                                                    |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Find measurements that need more repetitions                  | Per-input counts, standard deviation, and raw distributions within each run; mark insufficient samples rather than treating them as stable                    |
+| Distinguish repetition noise from changes between invocations | Compare within-run variation with per-run estimates at the same revision/input, grouped by environment and execution options                                  |
+| Spot drift during collection                                  | Measurement timestamps and execution order within a fixed revision/input/configuration; inspect trends or outliers without automatically discarding them      |
+| Track reliability across commits                              | Separate counts of success, failure, unsupported, unfinished, and unmeasured work against a fixed selected workload                                           |
+| Allocate further measurements, later                          | Use missing coverage and a defined uncertainty target to suggest revision/input work items within a sample budget; retain the scheduling policy and decisions |
 
 The most useful first additions are normalized histories, per-input change
 rankings, parameter scaling, coverage checks, and within-run variation. They help
