@@ -4,6 +4,9 @@ Status: proposed design, based on the storage and UI discussion. Rust snippets
 describe intended boundaries; they are not implemented APIs. Defaults identified
 as proposals still need validation during implementation.
 
+Selected approaches: `rusqlite` for database access and distributed adapter
+registration. The choice between `inventory` and `linkme` remains open.
+
 ## Purpose and scope
 
 Run performance tests across commits and inspect how their results change.
@@ -51,7 +54,7 @@ One person may fill several roles. The groups describe what they are trying to d
 
 | Use case                                | Required data or operation                                                                                                                |
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Add an experiment type                  | Implement a procedure and suite with typed, serializable inputs and outputs; declare the suite once for execution and typed reading        |
+| Add an experiment type                  | Implement a procedure and suite with typed, serializable inputs and outputs; register the generic read adapter beside the procedure        |
 | Reuse execution logic                   | Compose existing synthesis, tool, measurement, and reference components, as MCM and synthesis already do                                  |
 | Make results appear in the UI           | Declare output metrics, units, descriptions, and supported reductions through shared interfaces, without benchmark-specific frontend code |
 | Make inputs searchable and groupable    | Declare input labels and typed parameter fields with supported filter and grouping operations                                             |
@@ -264,19 +267,19 @@ history queries exclude them.
 
 The database library sits below the Store. It maps relational rows and executes
 queries; the Store still enforces suite compatibility, run selection, payload
-schema identity, and typed decoding. Choosing an ORM does not replace that domain
-API.
+schema identity, and typed decoding.
 
-Diesel is a reasonable choice here. Its query DSL and generated schema provide
-compile-time checks for relational queries and row mappings, and its tooling
-manages migrations. That benefits the common experiment/run/attempt tables.
-The checks are against the declared Rust schema; migrations must still keep the
-actual database in sync. See the [Diesel guide](https://diesel.rs/guides/getting-started.html).
+Decision: use [rusqlite](https://docs.rs/rusqlite/latest/rusqlite/). Its direct,
+synchronous SQLite API fits the initial Store. Keep SQL, parameter binding, row
+mapping, migrations, and connection handling inside `SqliteStore`; public methods
+return domain types rather than database rows.
 
-With JSON stored in a text column, Diesel can check the SQL column and row types,
-but not that the bytes contain the expected `P::Output` or the right measurement
-contract. Serde decoding and Store validation remain necessary. There should be
-one shared attempt-row model, not a Diesel entity or migration for each procedure.
+All procedures use the common relational schema, with benchmark-specific data in
+versioned payloads. Serde decoding and Store validation check that a payload
+matches the expected `P::Output` and measurement contract. New procedures do not
+need their own SQL tables or row models.
+
+Alternatives considered:
 
 | Option | Benefit | Fit and cost for this project |
 | --- | --- | --- |
@@ -289,13 +292,8 @@ one shared attempt-row model, not a Diesel entity or migration for each procedur
 The SQLx macro requirements are documented in its
 [query macro reference](https://docs.rs/sqlx/latest/sqlx/macro.query.html).
 
-Proposed starting point: `rusqlite` behind the typed Store, because execution is
-synchronous and the initial query surface is bounded. Diesel remains a valid
-alternative if its DSL is comfortable; there is no architectural reason to
-discard working Diesel code. Neither choice requires benchmark-specific database
-models, and neither has a measured performance advantage in this project. Choose
-the library before implementation, without exposing its row types in the public
-Store API.
+The decision is based on fit and implementation simplicity. No performance
+advantage over the alternatives has been measured in this project.
 
 ## Typed storage and runtime dispatch
 
@@ -341,60 +339,61 @@ trait ExperimentAdapter {
 // Common implementation: decode P::Input/P::Output, then run generic analysis.
 struct TypedAdapter<P>(std::marker::PhantomData<P>);
 
-// The shared experiment declaration supplies these adapters; see below.
+// Distributed registrations supply factories for these adapters; see below.
 ```
 
 The registry can hold `Box<dyn ExperimentAdapter>`. `TypedAdapter<P>` implements
 the operations generically. Reject conflicting registrations, and report stored
 experiments with unavailable adapters as unsupported rather than hiding them.
-Keep discovery metadata readable without decoding outputs. A fixed enum or match
-is also adequate for a small executable; a dynamic plugin loader is unnecessary.
+Keep discovery metadata readable without decoding outputs.
 
-### Declare an experiment once
+### Register adapters beside their procedures
 
 A concrete decoder must be instantiated for each supported procedure/schema
 combination. Its implementation is generic; a separate manual
 `registry.register::<McmProcedure>()` call is not required. Rust does not provide
 a runtime enumeration of every type implementing a trait, so those concrete
-types must enter the executable through some declaration or generated code.
+types must enter the executable through an explicit registration.
 
-Prefer one experiment catalogue shared by the future driver and UI server:
+Decision: use distributed registration through
+[inventory](https://docs.rs/inventory/latest/inventory/) or
+[linkme](https://docs.rs/linkme/latest/linkme/). Each procedure module registers a
+descriptor containing its persistent identities and a factory for the generic
+`TypedAdapter<P>`. The runner and UI server discover these descriptors from linked
+code. Authors maintain the registration beside the procedure rather than updating
+a central catalogue or a separate list in each executable.
 
 ```rust
-// Proposed macro, not an existing API.
-experiment_catalog! {
-    mcm: McmSuite,
-    synth: SynthSuite,
+// Illustrative inventory form, beside McmProcedure.
+// AdapterRegistration and its const constructor are proposed shared helpers.
+inventory::submit! {
+    AdapterRegistration::for_procedure::<McmProcedure>()
 }
 ```
 
-Each entry names the suite once. The macro uses `S::Procedure` and that
-procedure's input/output types to generate the runnable entry and read adapter.
-Typed construction of suite configuration remains the runner's responsibility;
-building the read registry does not construct the suite or initialize tools.
-Multiple suites using one procedure reuse a single decoder entry.
+With `inventory`, the shared registry declares `inventory::collect!` once and
+iterates submitted descriptors. With `linkme`, descriptors are entries in a
+shared distributed slice. Choose one crate during implementation; the descriptor
+and typed adapter boundaries are the same in either case.
 
-Generate the runtime runner choices and adapter registry from these same entries,
-rather than maintaining two lists. Adding a type still requires opting it into
-the executable, but adding a runnable catalogue entry cannot forget the reader.
-Validate required `StoredProcedure` and input-description bounds through the
-generated code. An identity mapped to conflicting decoders is an error; older
-schema decoders may need explicit read-only entries even when no longer runnable.
+Registration instantiates a generic factory using `P::Input` and `P::Output`.
+It must validate the required `StoredProcedure` and input-description bounds at
+compile time. Creating or discovering descriptors does not construct suites,
+initialize tools, or execute benchmarks. Typed suite configuration remains the
+runner's responsibility. Multiple suites using one procedure share its registered
+decoder; older schemas can have read-only registrations.
 
-If registration beside the type is preferable, a proposed attribute macro on the
-suite implementation could submit its adapter factory through
-[inventory](https://docs.rs/inventory/latest/inventory/) or
-[linkme](https://docs.rs/linkme/latest/linkme/). These support distributed
-registration from linked code, avoiding a central list. They still require an
-opt-in declaration, linked modules/crates, and checks for duplicate keys. Registry
-order must be made deterministic explicitly. This is an alternative to the
-catalogue, not another registry authors must update.
+The procedure's module or crate must be included in each executable that needs
+its decoder. Implementing a trait alone does not register a type. Discovery must
+sort descriptors by stable keys and reject conflicting identities, so linker or
+iteration order cannot affect behavior. Missing decoders remain visible as
+unsupported stored experiments.
 
 Registering an adapter only when a benchmark runs is insufficient: a fresh UI
 process must also decode historical results without running any experiment.
 Persisting a procedure key or Rust type name does not supply executable decoder
-code. The proposed initial choice is the shared catalogue, with distributed
-registration available if the project later needs independent experiment crates.
+code. The distributed registrations supply that code independently of run
+execution.
 
 ### Generic metric access
 
@@ -625,12 +624,12 @@ become necessary, treat them as derived data tied to payload and metric semantic
 
 1. Define persistent identities, input matching, measurement contracts, and
    immutable suite-version registration.
-2. Implement one database, transactional registration, frozen run plans, and
-   incremental typed attempt writes.
+2. Implement one SQLite database through `rusqlite`, transactional registration,
+   frozen run plans, and incremental typed attempt writes.
 3. Implement version projection and explicit run selection, returning dimensions
    and missing-state information with raw observations.
-4. Add generic adapter dispatch, metric/input descriptions, filtering, grouping,
-   and analysis responses.
+4. Add distributed adapter registration using `inventory` or `linkme`, generic
+   dispatch, metric/input descriptions, filtering, grouping, and analysis responses.
 5. Add run inspection and clearly scoped standard-deviation displays.
 6. Design suite comparison, saved views, and adaptive measurement separately.
 
