@@ -32,71 +32,122 @@ One person may fill several roles. The groups describe what they are trying to d
 
 ### UI users
 
-| Use case | Required data or operation |
-| --- | --- |
-| Find an experiment | Name, description, available versions, creation time, latest measurement time, and clearly labeled result counts |
-| Select a workload version | Target version and its inputs; exact-version results or projection from compatible later minor versions |
-| View metrics across commits | Explicit revision order, precise commit selection, selected inputs, measurements, and units |
-| Narrow a large suite | Searchable input descriptions, typed parameter filters, matching counts, paging, and exclusions |
-| Select runs and environments | Run metadata and explicit selection policies so reruns or different machines are not silently combined |
-| Change aggregation | Raw observations and separate choices for repetitions, runs when selected, and inputs |
-| Split a chart into series | Group by input identity or parameter; preview group values and counts before creating many series |
-| Investigate a run | Run configuration, environment, source version, commit details, per-input summaries, individual attempts, diagnostics, and artifacts |
-| Explain missing points | Optional display of build failures, failed or unsupported attempts, unfinished work, unmeasured work, and missing metrics |
-| Inspect variation at a commit | Sample counts and standard deviation with an explicit population: repetitions within a run or summaries across runs |
-| Check what contributes to a point | Included inputs and observations, exclusions, coverage, selected run IDs, and any fallback to older results |
-| Compare suite definitions, later | Added, removed, and retained input identities; compatibility and matching rules |
+| Use case                          | Required data or operation                                                                                                           |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Find an experiment                | Name, description, available versions, creation time, latest measurement time, and clearly labeled result counts                     |
+| Select a workload version         | Target version and its inputs; exact-version results or projection from compatible later minor versions                              |
+| View metrics across commits       | Explicit revision order, precise commit selection, selected inputs, measurements, and units                                          |
+| Narrow a large suite              | Searchable input descriptions, typed parameter filters, matching counts, paging, and exclusions                                      |
+| Select runs and environments      | Run metadata and explicit selection policies so reruns or different machines are not silently combined                               |
+| Change aggregation                | Raw observations and separate choices for repetitions, runs when selected, and inputs                                                |
+| Split a chart into series         | Group by input identity or parameter; preview group values and counts before creating many series                                    |
+| Investigate a run                 | Run configuration, environment, source version, commit details, per-input summaries, individual attempts, diagnostics, and artifacts |
+| Explain missing points            | Optional display of build failures, failed or unsupported attempts, unfinished work, unmeasured work, and missing metrics            |
+| Inspect variation at a commit     | Sample counts and standard deviation with an explicit population: repetitions within a run or summaries across runs                  |
+| Check what contributes to a point | Included inputs and observations, exclusions, coverage, selected run IDs, and any fallback to older results                          |
+| Compare suite definitions, later  | Added, removed, and retained input identities; compatibility and matching rules                                                      |
 
 ### Experiment authors
 
-| Use case | Required data or operation |
-| --- | --- |
-| Add an experiment type | Implement a procedure and suite with typed, serializable inputs and outputs; register the common typed storage adapter |
-| Reuse execution logic | Compose existing synthesis, tool, measurement, and reference components, as MCM and synthesis already do |
-| Make results appear in the UI | Declare output metrics, units, descriptions, and supported reductions through shared interfaces, without benchmark-specific frontend code |
-| Make inputs searchable and groupable | Declare input labels and typed parameter fields with supported filter and grouping operations |
-| Evolve a suite | Preserve stable input identities; additions produce compatible minor versions, while incompatible changes advance the major version |
-| Evolve result formats or metric meaning | Declare payload schemas and measurement contracts so incompatible data is rejected or explicitly migrated |
-| Access results in code | Read concrete input and output types through a validated Store handle and reuse the metric interface for analysis |
+| Use case                                | Required data or operation                                                                                                                |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Add an experiment type                  | Implement a procedure and suite with typed, serializable inputs and outputs; declare the suite once for execution and typed reading        |
+| Reuse execution logic                   | Compose existing synthesis, tool, measurement, and reference components, as MCM and synthesis already do                                  |
+| Make results appear in the UI           | Declare output metrics, units, descriptions, and supported reductions through shared interfaces, without benchmark-specific frontend code |
+| Make inputs searchable and groupable    | Declare input labels and typed parameter fields with supported filter and grouping operations                                             |
+| Evolve a suite                          | Preserve stable input identities; additions produce compatible minor versions, while incompatible changes advance the major version       |
+| Evolve result formats or metric meaning | Declare payload schemas and measurement contracts so incompatible data is rejected or explicitly migrated                                 |
+| Access results in code                  | Read concrete input and output types through a validated Store handle and reuse the metric interface for analysis                         |
 
 ### Benchmark operators
 
-| Use case | Required data or operation |
-| --- | --- |
-| Run an experiment across commits | Select the suite, revisions, inputs, repetitions, execution options, and environment; persist the resolved run plan |
-| Publish results to local discovery | Register the experiment, definition, and planned run together so results appear in the UI without a separate catalog step |
-| Collect more measurements | Create a new run while preserving previous runs, raw repetitions, and provenance |
-| Inspect partial or failed execution | Incrementally persisted outcomes, build failures, diagnostics, and distinct unfinished or interrupted states |
-| Collect diagnostic artifacts | Choose artifact retention and distinguish diagnostic executions from normal measurements |
-| Measure adaptively, later | Configure the metric, baseline, tolerance, and sample budget; retain observations, progress, and stopping reasons |
+| Use case                            | Required data or operation                                                                                                |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Run an experiment across commits    | Select the suite, revisions, inputs, repetitions, execution options, and environment; persist the resolved run plan       |
+| Publish results to local discovery  | Register the experiment, definition, and planned run together so results appear in the UI without a separate catalog step |
+| Collect more measurements           | Create a new run while preserving previous runs, raw repetitions, and provenance                                          |
+| Inspect partial or failed execution | Incrementally persisted outcomes, build failures, diagnostics, and distinct unfinished or interrupted states              |
+| Collect diagnostic artifacts        | Choose artifact retention and distinguish diagnostic executions from normal measurements                                  |
+| Measure adaptively, later           | Configure the metric, baseline, tolerance, and sample budget; retain observations, progress, and stopping reasons         |
 
 A dedicated two-commit comparison screen is not an initial requirement. Precise
 commit selection and run inspection are more useful first. Reproducibility is a
 system property: a response should identify the records used, even before saved
 views exist.
 
+## Analysis use cases
+
+These are candidate workflows, not commitments to implement every analysis.
+They use the same typed results and metric interfaces as the history view.
+Comparisons can be overlays, filters, and inspection tables within that view;
+they do not require a separate two-commit comparison screen.
+
+### UI users
+
+| Use case | Required data or operation |
+| --- | --- |
+| Read relative performance over time | Normalize each input to a selected baseline revision before combining inputs; show matched coverage and handle zero or absent baselines explicitly |
+| Find where a trend changed | Absolute or relative changes between adjacent selected revisions, with input matching and commit details; indicate gaps between measured commits |
+| Find the inputs behind a change | Rank per-input changes and, where the suite estimator permits it, their contributions to the aggregate; allow opening the raw measurements |
+| Distinguish broad changes from isolated regressions | Counts and distributions of improved, unchanged, and worsened inputs using a user-selected practical threshold and the metric's improvement direction |
+| See what the average hides | Median, selected percentiles, and worst inputs across per-input estimates at each revision; keep workload spread separate from repetition noise |
+| See how performance scales with input parameters | Group or plot estimates against width, coefficient count, design size, or other declared parameters, while controlling the remaining parameters |
+| Check whether a trend is caused by changing coverage | Recompute using a fixed common input set and show membership differences, failures, and missing metrics alongside the original view |
+| Explore relationships between metrics | Plot metrics such as runtime and area for the same input/revision/run estimates; retain grouping and provenance rather than correlating unrelated samples |
+| Inspect time versus result-quality tradeoffs | View runtime alongside area or another quality metric; later identify choices that improve one metric without worsening the others |
+
+### Experiment authors
+
+| Use case | Required data or operation |
+| --- | --- |
+| Evaluate an optimization against its baseline or reference | Extract baseline, optimized, and reference metrics from typed outputs; declare the ratio or savings formula and preserve reused reference observation identities |
+| Identify which phase became expensive | Phase-level measurements with stable identities and units; distinguish inclusive timings from disjoint phases before summing them |
+| Define an experiment-specific efficiency metric | Expose computed metrics, such as area saved per unit runtime, through `BenchmarkOut`; specify valid domains, units, and reduction order so generic analysis can use them |
+
+### Benchmark operators
+
+| Use case | Required data or operation |
+| --- | --- |
+| Find measurements that need more repetitions | Per-input counts, standard deviation, and raw distributions within each run; mark insufficient samples rather than treating them as stable |
+| Distinguish repetition noise from changes between invocations | Compare within-run variation with per-run estimates at the same revision/input, grouped by environment and execution options |
+| Spot drift during collection | Measurement timestamps and execution order within a fixed revision/input/configuration; inspect trends or outliers without automatically discarding them |
+| Track reliability across commits | Separate counts of success, failure, unsupported, unfinished, and unmeasured work against a fixed selected workload |
+| Allocate further measurements, later | Use missing coverage and a defined uncertainty target to suggest revision/input work items within a sample budget; retain the scheduling policy and decisions |
+
+The most useful first additions are normalized histories, per-input change
+rankings, parameter scaling, coverage checks, and within-run variation. They help
+explain an existing chart without requiring a new statistical decision system.
+Automatic change detection, confidence-based decisions, and suite uncertainty
+intervals remain later work.
+
+Analysis needs a few shared capabilities beyond scalar extraction: metric
+direction where meaningful, normalization and formula rules, input parameter
+descriptors, and observation provenance. These belong in experiment/analysis
+interfaces, not per-experiment UI code. A practical change threshold is a display
+or analysis choice; it does not by itself establish statistical significance.
+
 ## Persistent identities
 
-| Entity | Meaning |
-| --- | --- |
-| Experiment | An ongoing named collection, such as MCM performance, scoped to its source repository and procedure family |
-| Suite definition | An immutable, versioned workload definition with frozen inputs |
-| Input | A stable identity for the complete benchmark configuration |
-| Revision | A commit identity within a repository, with descriptive commit metadata |
-| Run | One invocation against a definition, selected revisions and inputs, execution options, and environment |
-| Work item | One `(run, revision, input)` execution, containing its repetitions and completion state |
-| Attempt | One execution of one repetition, with its own identity, outcome, and provenance |
+| Entity           | Meaning                                                                                                    |
+| ---------------- | ---------------------------------------------------------------------------------------------------------- |
+| Experiment       | An ongoing named collection, such as MCM performance, scoped to its source repository and procedure family |
+| Suite definition | An immutable, versioned workload definition with frozen inputs                                             |
+| Input            | A stable identity for the complete benchmark configuration                                                 |
+| Revision         | A commit identity within a repository, with descriptive commit metadata                                    |
+| Run              | One invocation against a definition, selected revisions and inputs, execution options, and environment     |
+| Work item        | One `(run, revision, input)` execution, containing its repetitions and completion state                    |
+| Attempt          | One execution of one repetition, with its own identity, outcome, and provenance                            |
 
 Use opaque IDs internally. Names and timestamps describe records; they do not
-identify a dataset. The current Rust `Experiment<S>` represents an execution
+identify a dataset. **The current Rust `Experiment<S>` represents an execution
 configuration, while “experiment” here means the persistent collection. Naming
-can be reconciled when the driver is implemented.
+can be reconciled when the driver is implemented.**
 
 The experiment picker first selects an experiment, then a version. The proposed
 default is its latest registered version. Show whether that version has results;
 do not silently substitute a different workload because a newer version is empty.
-Use `last_measured_at`, separate from any future last-viewed preference. Define
-counts explicitly, for example successful attempts and measured revisions.
+Also show `last_measured_at` when choosing experiment or at least in metadata.
+Define counts explicitly, for example successful attempts and measured revisions.
 
 Input identity must include configuration that affects execution, including
 relevant source contents, libraries, options, and reference-tool identity. A
@@ -209,6 +260,43 @@ discarded, and unavailable artifacts. Diagnostic executions that change timing
 need a separate purpose and an optional link to their source attempt; normal
 history queries exclude them.
 
+## Database access library
+
+The database library sits below the Store. It maps relational rows and executes
+queries; the Store still enforces suite compatibility, run selection, payload
+schema identity, and typed decoding. Choosing an ORM does not replace that domain
+API.
+
+Diesel is a reasonable choice here. Its query DSL and generated schema provide
+compile-time checks for relational queries and row mappings, and its tooling
+manages migrations. That benefits the common experiment/run/attempt tables.
+The checks are against the declared Rust schema; migrations must still keep the
+actual database in sync. See the [Diesel guide](https://diesel.rs/guides/getting-started.html).
+
+With JSON stored in a text column, Diesel can check the SQL column and row types,
+but not that the bytes contain the expected `P::Output` or the right measurement
+contract. Serde decoding and Store validation remain necessary. There should be
+one shared attempt-row model, not a Diesel entity or migration for each procedure.
+
+| Option | Benefit | Fit and cost for this project |
+| --- | --- | --- |
+| [rusqlite](https://docs.rs/rusqlite/latest/rusqlite/) | Direct SQLite access with prepared statements and row decoding | Small synchronous implementation; write SQL and row mapping explicitly, with query errors generally checked at runtime |
+| [Diesel](https://diesel.rs/guides/getting-started.html) | Typed query construction, row derives, and migration tooling | Useful if relational compile-time checks justify schema/derive machinery; runtime-built selections still need deliberate query construction |
+| [SQLx](https://docs.rs/sqlx/latest/sqlx/) | SQL-oriented async API and optional compile-time checked query macros | An alternative if the server benefits from async database access; checked macros need a schema database or prepared offline metadata, and do not check arbitrary runtime-built SQL |
+| [SeaQuery](https://docs.rs/sea-query/latest/sea_query/) with a driver | Compose dynamic SQL and parameter bindings without a full ORM | An optional layer if building selection queries by hand becomes awkward; still needs execution and row decoding |
+| [SeaORM](https://github.com/SeaQL/sea-orm) | Entity models, relationships, filtering, and pagination | Worth considering if model-oriented application code becomes the main workload; more abstraction than this Store currently requires |
+
+The SQLx macro requirements are documented in its
+[query macro reference](https://docs.rs/sqlx/latest/sqlx/macro.query.html).
+
+Proposed starting point: `rusqlite` behind the typed Store, because execution is
+synchronous and the initial query surface is bounded. Diesel remains a valid
+alternative if its DSL is comfortable; there is no architectural reason to
+discard working Diesel code. Neither choice requires benchmark-specific database
+models, and neither has a measured performance advantage in this project. Choose
+the library before implementation, without exposing its row types in the public
+Store API.
+
 ## Typed storage and runtime dispatch
 
 Persist benchmark-specific inputs and outputs as versioned serialized payloads.
@@ -253,15 +341,62 @@ trait ExperimentAdapter {
 // Common implementation: decode P::Input/P::Output, then run generic analysis.
 struct TypedAdapter<P>(std::marker::PhantomData<P>);
 
-// Registration creates the common adapter; no experiment-specific UI methods.
-registry.register::<McmProcedure>()?;
+// The shared experiment declaration supplies these adapters; see below.
 ```
 
 The registry can hold `Box<dyn ExperimentAdapter>`. `TypedAdapter<P>` implements
-the operations generically. Reject duplicate registrations, and report stored
+the operations generically. Reject conflicting registrations, and report stored
 experiments with unavailable adapters as unsupported rather than hiding them.
 Keep discovery metadata readable without decoding outputs. A fixed enum or match
 is also adequate for a small executable; a dynamic plugin loader is unnecessary.
+
+### Declare an experiment once
+
+A concrete decoder must be instantiated for each supported procedure/schema
+combination. Its implementation is generic; a separate manual
+`registry.register::<McmProcedure>()` call is not required. Rust does not provide
+a runtime enumeration of every type implementing a trait, so those concrete
+types must enter the executable through some declaration or generated code.
+
+Prefer one experiment catalogue shared by the future driver and UI server:
+
+```rust
+// Proposed macro, not an existing API.
+experiment_catalog! {
+    mcm: McmSuite,
+    synth: SynthSuite,
+}
+```
+
+Each entry names the suite once. The macro uses `S::Procedure` and that
+procedure's input/output types to generate the runnable entry and read adapter.
+Typed construction of suite configuration remains the runner's responsibility;
+building the read registry does not construct the suite or initialize tools.
+Multiple suites using one procedure reuse a single decoder entry.
+
+Generate the runtime runner choices and adapter registry from these same entries,
+rather than maintaining two lists. Adding a type still requires opting it into
+the executable, but adding a runnable catalogue entry cannot forget the reader.
+Validate required `StoredProcedure` and input-description bounds through the
+generated code. An identity mapped to conflicting decoders is an error; older
+schema decoders may need explicit read-only entries even when no longer runnable.
+
+If registration beside the type is preferable, a proposed attribute macro on the
+suite implementation could submit its adapter factory through
+[inventory](https://docs.rs/inventory/latest/inventory/) or
+[linkme](https://docs.rs/linkme/latest/linkme/). These support distributed
+registration from linked code, avoiding a central list. They still require an
+opt-in declaration, linked modules/crates, and checks for duplicate keys. Registry
+order must be made deterministic explicitly. This is an alternative to the
+catalogue, not another registry authors must update.
+
+Registering an adapter only when a benchmark runs is insufficient: a fresh UI
+process must also decode historical results without running any experiment.
+Persisting a procedure key or Rust type name does not supply executable decoder
+code. The proposed initial choice is the shared catalogue, with distributed
+registration available if the project later needs independent experiment crates.
+
+### Generic metric access
 
 The proposed “parent type with metric information” is useful as a common view.
 It does not require downcasting. The current `BenchmarkOut` is not dyn-compatible:
@@ -296,16 +431,16 @@ reserved for genuinely type-specific operations, outside generic UI rendering.
 Metadata queries must not load measurement payloads. The conceptual operations
 are:
 
-| Operation | Returns |
-| --- | --- |
-| List experiments | Discovery summaries and availability information |
-| Describe experiment and versions | Definitions, compatibility, counts, and supported contracts |
-| List revisions | Ordered commit metadata, including revisions without measurements |
-| Describe/search inputs | Parameter descriptors, paged descriptions, and matching counts |
-| Describe groups | Group values and counts for the selected target inputs |
-| List runs | Configuration, environment, purpose, completion state, and timestamps |
-| Query typed results | Selected dimensions, work items, raw outcomes, and provenance |
-| Inspect run/work item/attempt | Detailed outcomes, diagnostics, commit information, and artifact references |
+| Operation                        | Returns                                                                     |
+| -------------------------------- | --------------------------------------------------------------------------- |
+| List experiments                 | Discovery summaries and availability information                            |
+| Describe experiment and versions | Definitions, compatibility, counts, and supported contracts                 |
+| List revisions                   | Ordered commit metadata, including revisions without measurements           |
+| Describe/search inputs           | Parameter descriptors, paged descriptions, and matching counts              |
+| Describe groups                  | Group values and counts for the selected target inputs                      |
+| List runs                        | Configuration, environment, purpose, completion state, and timestamps       |
+| Query typed results              | Selected dimensions, work items, raw outcomes, and provenance               |
+| Inspect run/work item/attempt    | Detailed outcomes, diagnostics, commit information, and artifact references |
 
 Input descriptors need stable field paths, labels, value types, and permitted
 filter/group operations. `BenchmarkIn` does not currently provide this interface.
@@ -428,12 +563,12 @@ exact replay is later required. Saved-view UX is deferred.
 
 The UI must name the population behind a standard deviation:
 
-| Quantity | Population |
-| --- | --- |
-| Within-run standard deviation | Repetitions of one input at one revision in one run |
-| Between-run standard deviation | Per-run estimates for the same input and revision |
-| Across-input standard deviation | Different workloads' estimates; workload spread rather than repeatability |
-| Suite uncertainty interval | Uncertainty in the chosen suite estimator under a specified statistical model |
+| Quantity                        | Population                                                                    |
+| ------------------------------- | ----------------------------------------------------------------------------- |
+| Within-run standard deviation   | Repetitions of one input at one revision in one run                           |
+| Between-run standard deviation  | Per-run estimates for the same input and revision                             |
+| Across-input standard deviation | Different workloads' estimates; workload spread rather than repeatability     |
+| Suite uncertainty interval      | Uncertainty in the chosen suite estimator under a specified statistical model |
 
 Proposed initial display: per-input mean, sample standard deviation, and count at
 a selected commit, optionally plotted across commits. Sample standard deviation
