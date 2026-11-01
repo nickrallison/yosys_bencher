@@ -145,6 +145,34 @@ fn charts_use_stable_inspection_ids_and_numeric_scaling_axes() {
     assert_eq!(spec.series[0].points[0].x, json!(16));
 }
 #[test]
+fn chart_legends_use_input_labels_and_keep_input_ids_for_grouping() {
+    let (backend, meta) = dataset();
+    let mut plan = initial(&meta);
+    plan.series = vec![Dimension::Input];
+    let result = backend.analyze(&plan).unwrap();
+    let spec = chart(&result, &meta);
+    assert_eq!(spec.series.len(), 2);
+    for input in &result.inputs {
+        let group = result
+            .groups
+            .iter()
+            .find(|g| g.dimensions.get("input") == Some(&json!(input.id)))
+            .unwrap();
+        let series = spec.series.iter().find(|s| s.id == group.id).unwrap();
+        assert_eq!(series.label, format!("input: {}", input.label));
+        assert!(series.label.contains("adder_"));
+    }
+
+    plan.series.push(Dimension::Parameter("design".into()));
+    let result = backend.analyze(&plan).unwrap();
+    let spec = chart(&result, &meta);
+    for input in &result.inputs {
+        assert!(spec.series.iter().any(|s| {
+            s.label == format!("design: \"{}\", input: {}", input.label, input.label)
+        }));
+    }
+}
+#[test]
 fn coverage_counts_input_slots_and_keeps_attempt_counts_separate() {
     let (backend, meta) = dataset();
     let mut plan = initial(&meta);

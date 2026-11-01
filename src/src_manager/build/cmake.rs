@@ -143,6 +143,17 @@ impl CcacheCMakeBuilder {
         build_dir: &Path,
         install_dir: &Path,
     ) -> Result<PathBuf, BuildError> {
+        self.build_with_logs(source_dir, build_dir, install_dir, build_dir)
+    }
+
+    /// Keep logs separately so callers can prune build and install directories.
+    pub fn build_with_logs(
+        &self,
+        source_dir: &Path,
+        build_dir: &Path,
+        install_dir: &Path,
+        logs_dir: &Path,
+    ) -> Result<PathBuf, BuildError> {
         let source_dir = source_dir.canonicalize()?;
         if !source_dir.join("CMakeLists.txt").is_file() {
             return Err(BuildError::MissingCMakeProject(source_dir));
@@ -150,12 +161,13 @@ impl CcacheCMakeBuilder {
         fs::create_dir_all(build_dir)?;
         fs::create_dir_all(install_dir)?;
         fs::create_dir_all(&self.ccache_dir)?;
+        fs::create_dir_all(logs_dir)?;
         let build_dir = build_dir.canonicalize()?;
         let install_dir = install_dir.canonicalize()?;
         let ccache_dir = self.ccache_dir.canonicalize()?;
         let logs = tempfile::Builder::new()
             .prefix("logs-")
-            .tempdir_in(&build_dir)?
+            .tempdir_in(logs_dir.canonicalize()?)?
             .keep();
         let base_dir = source_dir
             .ancestors()

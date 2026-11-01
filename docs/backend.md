@@ -36,11 +36,17 @@ current revision/build phase. Measurement progress also includes the input,
 repetition, and subprocess label. Redirected output uses plain stage lines without
 terminal escape sequences. Use `cargo run --quiet` to silence Cargo's own output.
 
-Build stdout and stderr are saved under each build directory in a unique
-`logs-*/` directory (`configure.log`, `build.log`, and `install.log`). Failed builds
-report their log path and collection continues. Benchmark process logs remain in
-the attempt artifacts. MCM prints a short summary and report/database locations;
-the full JSON is written to `results.json` instead of printed to the terminal.
+MCM prunes each revision's build and install directories after its measurements
+and profiling finish, including failed revisions. The source checkout, ccache,
+and benchmark artifacts are retained. Cleanup errors interrupt the run.
+
+Build stdout and stderr are saved in a unique `logs-*/` directory
+(`configure.log`, `build.log`, and `install.log`). MCM keeps these under
+`output/mcm/builds/logs/<revision>/`, outside the pruned directories;
+`build_yosys` keeps its logs inside each build directory and retains its installs.
+Failed builds report their log path and collection continues. Benchmark process
+logs remain in the attempt artifacts. MCM prints a short summary and report/database
+locations; the full JSON is written to `results.json` instead of printed to the terminal.
 
 Experiment IDs come from `list`; metric paths and input/run fields come from
 `describe`. The results command accepts `--database PATH` before its command.

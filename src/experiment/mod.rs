@@ -161,80 +161,93 @@ where
                     revision_count,
                     short_revision
                 ));
-                progress.stage("Preparing tools");
-                let tools = match provider
-                    .tool(&revision)
-                    .and_then(|tool| self.suite.tools(&tool, &session))
-                {
-                    Ok(tools) => tools,
-                    Err(error) => {
-                        store.fail_revision(
-                            registered.run,
-                            revision.id().id(),
-                            &error.to_string(),
-                        )?;
-                        progress.println(format!("Skipping {short_revision}: {error}"));
-                        progress.advance(samples_per_revision);
-                        revision_failures.push(RevisionFailure {
-                            revision,
-                            reason: error.to_string(),
-                        });
-                        continue;
-                    }
-                };
-                progress.stage("Measuring inputs");
-                for (input_index, input) in definition.inputs().iter().enumerate() {
-                    let work =
-                        registered.work_items[revision.id().id()][&registered.inputs[input_index]];
-                    for sample_index in 0..options.repetitions.get() {
-                        progress.context(format!(
-                            "{short_revision} input {}/{} repeat {}/{}",
-                            input_index + 1,
-                            definition.inputs().len(),
-                            sample_index + 1,
-                            options.repetitions
-                        ));
-                        progress.detail(input.label());
-                        let id = store.start_attempt(work, sample_index)?;
-                        let (record, artifacts) = attempt::run_attempt(
-                            self.suite.procedure(),
-                            input,
-                            &tools,
-                            &settings,
-                            &directory,
-                            &format!(
-                                "attempt-{revision_index:04}-{input_index:04}-{sample_index:04}-"
-                            ),
-                            sample_index,
-                        )
-                        .unwrap_or_else(|error| {
-                            (
-                                AttemptRecord {
-                                    started_at: std::time::SystemTime::now(),
-                                    duration: std::time::Duration::ZERO,
-                                    outcome: AttemptOutcome::Failure(error.to_string()),
-                                    diagnostics: vec![],
-                                },
-                                None,
-                            )
-                        });
-                        store.finish_attempt::<S::Procedure>(id, &record, artifacts.as_deref())?;
-                        match &record.outcome {
-                            AttemptOutcome::Success(_) => succeeded += 1,
-                            AttemptOutcome::Failure(_) => failed += 1,
-                            AttemptOutcome::Unsupported(_) => unsupported += 1,
+                let result = (|| -> Result<(), ExperimentError> {
+                    progress.stage("Preparing tools");
+                    let tools = match provider
+                        .tool(&revision)
+                        .and_then(|tool| self.suite.tools(&tool, &session))
+                    {
+                        Ok(tools) => tools,
+                        Err(error) => {
+                            store.fail_revision(
+                                registered.run,
+                                revision.id().id(),
+                                &error.to_string(),
+                            )?;
+                            progress.println(format!("Skipping {short_revision}: {error}"));
+                            progress.advance(samples_per_revision);
+                            revision_failures.push(RevisionFailure {
+                                revision: revision.clone(),
+                                reason: error.to_string(),
+                            });
+                            return Ok(());
                         }
-                        progress.advance(1);
-                        attempts.push(Attempt {
-                            revision: revision.clone(),
-                            input_index,
-                            sample_index,
-                            artifacts,
-                            record,
-                        });
+                    };
+                    progress.stage("Measuring inputs");
+                    for (input_index, input) in definition.inputs().iter().enumerate() {
+                        let work = registered.work_items[revision.id().id()]
+                            [&registered.inputs[input_index]];
+                        for sample_index in 0..options.repetitions.get() {
+                            progress.context(format!(
+                                "{short_revision} input {}/{} repeat {}/{}",
+                                input_index + 1,
+                                definition.inputs().len(),
+                                sample_index + 1,
+                                options.repetitions
+                            ));
+                            progress.detail(input.label());
+                            let id = store.start_attempt(work, sample_index)?;
+                            let (record, artifacts) = attempt::run_attempt(
+                                self.suite.procedure(),
+                                input,
+                                &tools,
+                                &settings,
+                                &directory,
+                                &format!(
+                                    "attempt-{revision_index:04}-{input_index:04}-{sample_index:04}-"
+                                ),
+                                sample_index,
+                            )
+                            .unwrap_or_else(|error| {
+                                (
+                                    AttemptRecord {
+                                        started_at: std::time::SystemTime::now(),
+                                        duration: std::time::Duration::ZERO,
+                                        outcome: AttemptOutcome::Failure(error.to_string()),
+                                        diagnostics: vec![],
+                                    },
+                                    None,
+                                )
+                            });
+                            store.finish_attempt::<S::Procedure>(
+                                id,
+                                &record,
+                                artifacts.as_deref(),
+                            )?;
+                            match &record.outcome {
+                                AttemptOutcome::Success(_) => succeeded += 1,
+                                AttemptOutcome::Failure(_) => failed += 1,
+                                AttemptOutcome::Unsupported(_) => unsupported += 1,
+                            }
+                            progress.advance(1);
+                            attempts.push(Attempt {
+                                revision: revision.clone(),
+                                input_index,
+                                sample_index,
+                                artifacts,
+                                record,
+                            });
+                        }
+                        store.finish_work_item(work)?;
                     }
-                    store.finish_work_item(work)?;
+                    Ok(())
+                })();
+                let cleanup = provider.finish_revision(&revision);
+                if let Err(error) = &cleanup {
+                    progress.println(format!("Cleanup failed for {short_revision}: {error}"));
                 }
+                result?;
+                cleanup?;
             }
             store.finish_run(registered.run)?;
             Ok(())

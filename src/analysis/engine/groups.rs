@@ -71,7 +71,13 @@ pub(super) fn groups<I: BenchmarkIn, O>(
             } else {
                 dimensions
                     .iter()
-                    .map(|(k, v)| format!("{k}: {v}"))
+                    .map(|(k, v)| {
+                        if k == "input" && plan.series.contains(&Dimension::Input) {
+                            format!("input: {}", description.label)
+                        } else {
+                            format!("{k}: {v}")
+                        }
+                    })
                     .collect::<Vec<_>>()
                     .join(", ")
             };

@@ -45,6 +45,7 @@ pub trait BenchmarkIn: Clone + Eq + Hash + Serialize + DeserializeOwned {
     fn parameters(&self) -> std::collections::BTreeMap<String, serde_json::Value> {
         std::collections::BTreeMap::new()
     }
+    /// Human-readable input description for result tables and chart legends.
     fn label(&self) -> String {
         "Input".into()
     }

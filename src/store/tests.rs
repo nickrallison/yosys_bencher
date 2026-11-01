@@ -333,7 +333,7 @@ fn suite_ratio_keeps_zero_denominator_contributors_until_composition() {
     assert_eq!(result.series[0].points[0].coverage.included_inputs, 2);
 }
 #[test]
-fn runner_records_build_failure_and_continues() {
+fn runner_cleans_each_revision_and_continues_after_build_failure() {
     struct TestSuite;
     impl Suite for TestSuite {
         type Tool = ();
@@ -355,7 +355,11 @@ fn runner_records_build_failure_and_continues() {
             Ok(())
         }
     }
-    struct Provider;
+    #[derive(Default)]
+    struct Provider {
+        active: Option<String>,
+        finished: Vec<String>,
+    }
     impl ToolProvider for Provider {
         type Tool = ();
         fn revisions(
@@ -369,11 +373,24 @@ fn runner_records_build_failure_and_continues() {
             &mut self,
             r: &crate::src_manager::git::history::Commit,
         ) -> std::result::Result<(), ExperimentError> {
+            assert!(
+                self.active.is_none(),
+                "previous revision was not cleaned up"
+            );
+            self.active = Some(r.id().id().clone());
             if r.id().id() == "broken" {
                 Err(ExperimentError::Config("build failed".into()))
             } else {
                 Ok(())
             }
+        }
+        fn finish_revision(
+            &mut self,
+            r: &crate::src_manager::git::history::Commit,
+        ) -> std::result::Result<(), ExperimentError> {
+            assert_eq!(self.active.take().as_ref(), Some(r.id().id()));
+            self.finished.push(r.id().id().clone());
+            Ok(())
         }
     }
     let mut store = SqliteStore::in_memory().unwrap();
@@ -383,6 +400,7 @@ fn runner_records_build_failure_and_continues() {
         TestSuite,
         temp.path().into(),
     );
+    let mut provider = Provider::default();
     let report = experiment
         .run_stored(
             &mut store,
@@ -392,7 +410,7 @@ fn runner_records_build_failure_and_continues() {
                 description: String::new(),
                 repository: "test-repo".into(),
             },
-            &mut Provider,
+            &mut provider,
             &RunOptions {
                 perf_counters: None,
                 ..Default::default()
@@ -401,6 +419,8 @@ fn runner_records_build_failure_and_continues() {
         .unwrap();
     assert_eq!(report.revision_failures.len(), 1);
     assert_eq!(report.attempts.len(), 1);
+    assert_eq!(provider.finished, ["broken", "working"]);
+    assert!(provider.active.is_none());
     assert_eq!(store.run(report.run_id).unwrap().state, State::Complete);
     let states = store.revision_statuses(report.run_id).unwrap();
     assert_eq!(states[0].state, State::BuildFailed);
