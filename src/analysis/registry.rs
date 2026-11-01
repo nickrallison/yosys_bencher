@@ -15,6 +15,7 @@ pub use yosys_bench_ui_types::api::*;
 pub trait ExperimentAdapter: Send + Sync {
     fn contract(&self) -> Contract;
     fn metrics(&self) -> Vec<MetricSpec>;
+    fn default_metric(&self) -> Option<String>;
     fn fields(&self) -> Vec<InputField>;
     fn inputs(
         &self,
@@ -101,6 +102,11 @@ impl<P: StoredProcedure> ExperimentAdapter for TypedAdapter<P> {
     }
     fn metrics(&self) -> Vec<MetricSpec> {
         P::Output::analysis_metrics()
+    }
+    fn default_metric(&self) -> Option<String> {
+        P::DEFAULT_METRIC
+            .map(str::to_owned)
+            .or_else(|| self.metrics().first().map(|m| m.path.clone()))
     }
     fn fields(&self) -> Vec<InputField> {
         P::Input::fields()
@@ -275,6 +281,14 @@ impl AnalysisRegistry {
                     )));
                 }
             }
+            if let Some(default) = adapter.default_metric()
+                && !paths.contains(&default)
+            {
+                return Err(StoreError::Invalid(format!(
+                    "Unknown default metric for {}: {default}",
+                    contract.procedure
+                )));
+            }
             let fields = adapter.fields();
             if fields
                 .iter()
@@ -347,7 +361,13 @@ impl Backend {
                 Err(StoreError::Unsupported(reason)) => (vec![], vec![], vec![], Some(reason)),
                 Err(error) => return Err(error),
             };
+        let default_metric = self
+            .registry
+            .adapter(&self.store, id)
+            .ok()
+            .and_then(|a| a.default_metric());
         Ok(ExperimentDescription {
+            default_metric,
             experiment,
             versions,
             metrics,

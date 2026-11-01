@@ -7,12 +7,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Snapshot {
     pub generation: i64,
     pub plan: AnalysisPlan,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Coverage {
     pub selected_inputs: usize,
     pub eligible_inputs: usize,
@@ -22,12 +22,12 @@ pub struct Coverage {
     pub runs: usize,
     pub exclusions: Vec<Exclusion>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Exclusion {
     pub input: InputId,
     pub reason: String,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Point {
     pub id: String,
     pub x: Value,
@@ -36,14 +36,15 @@ pub struct Point {
     pub contributors: Vec<String>,
     pub details: BTreeMap<String, String>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Series {
+    pub partition: String,
     pub id: String,
     pub label: String,
     pub dimensions: BTreeMap<String, Value>,
     pub points: Vec<Point>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Observation {
     pub attempt: AttemptId,
     pub run: RunId,
@@ -55,7 +56,7 @@ pub struct Observation {
     pub reason: Option<String>,
     pub identities: Vec<String>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Estimate {
     pub id: String,
     pub revision: String,
@@ -73,7 +74,7 @@ pub struct Estimate {
     pub newer_unfinished: Vec<WorkItemId>,
     pub operands: Option<(f64, f64)>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChangeRow {
     pub id: String,
     pub series: String,
@@ -92,7 +93,7 @@ pub struct ChangeRow {
     pub skipped_revisions: Vec<String>,
     pub contributors: Vec<String>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ChangeSummary {
     pub series: String,
     pub baseline: String,
@@ -114,8 +115,9 @@ pub struct ChangeSummary {
     pub absolute: Option<f64>,
     pub percent: Option<f64>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Distribution {
+    pub dimensions: BTreeMap<String, Value>,
     pub id: String,
     pub population: Population,
     pub revision: String,
@@ -132,7 +134,7 @@ pub struct Distribution {
     pub max: Option<f64>,
     pub contributors: Vec<String>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct OutcomeCounts {
     pub success: usize,
     pub failure: usize,
@@ -142,7 +144,7 @@ pub struct OutcomeCounts {
     pub missing_metric: usize,
     pub excluded: usize,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CoverageCell {
     pub id: String,
     pub revision: String,
@@ -156,8 +158,16 @@ pub struct CoverageCell {
     pub work_items: Vec<WorkItemId>,
     pub newer_unfinished: Vec<WorkItemId>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SeriesDescription {
+    pub partition: String,
+    pub id: String,
+    pub label: String,
+    pub dimensions: BTreeMap<String, Value>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AnalysisResponse {
+    pub groups: Vec<SeriesDescription>,
     pub id: String,
     pub snapshot: Snapshot,
     pub definition: DefinitionSummary,
@@ -175,7 +185,7 @@ pub struct AnalysisResponse {
     pub coverage: Vec<CoverageCell>,
     pub warnings: Vec<String>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AttemptInspection {
     pub id: AttemptId,
     pub work_item: WorkItemId,
@@ -186,7 +196,7 @@ pub struct AttemptInspection {
     pub record: Option<crate::experiment::AttemptRecord<Value>>,
     pub artifacts: Vec<Artifact>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Inspection {
     pub estimates: Page<Estimate>,
     pub observations: Page<Observation>,

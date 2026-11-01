@@ -28,14 +28,14 @@ pub struct Contract {
     pub output_schema: u32,
     pub measurement: String,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExperimentSpec {
     pub key: String,
     pub name: String,
     pub description: String,
     pub repository: String,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ExperimentSummary {
     pub id: ExperimentId,
     pub spec: ExperimentSpec,
@@ -45,7 +45,7 @@ pub struct ExperimentSummary {
     pub successful_attempts: usize,
     pub measured_revisions: usize,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DefinitionSummary {
     pub id: DefinitionId,
     pub experiment: ExperimentId,
@@ -94,7 +94,7 @@ impl State {
         matches!(self, Self::Complete | Self::BuildFailed)
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RunSummary {
     pub id: RunId,
     pub experiment: ExperimentId,
@@ -112,7 +112,7 @@ pub struct RunSummary {
     pub finished_at: Option<i64>,
     pub repetitions: u32,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RegisteredRun {
     pub run: RunId,
     pub experiment: ExperimentId,
@@ -127,7 +127,7 @@ pub enum VersionSources {
     #[default]
     CompatibleSupersets,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum InputSelection {
     #[default]
@@ -142,7 +142,7 @@ pub enum InputSelection {
         excluded: Vec<InputId>,
     },
 }
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum RevisionQuery {
     #[default]
@@ -155,7 +155,7 @@ pub enum RevisionQuery {
         ids: Vec<String>,
     },
 }
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum RunSelection {
     #[default]
@@ -165,7 +165,7 @@ pub enum RunSelection {
     },
     All,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum PartitionSelection {
     #[default]
@@ -175,7 +175,7 @@ pub enum PartitionSelection {
     },
     All,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ResultSelection {
     pub experiment: ExperimentId,
     #[serde(default)]
@@ -207,7 +207,7 @@ impl ResultSelection {
         }
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkItemSummary {
     pub id: WorkItemId,
     pub run: RunId,
@@ -217,7 +217,7 @@ pub struct WorkItemSummary {
     pub reason: Option<String>,
     pub planned_repetitions: u32,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StoredAttempt<O> {
     pub id: AttemptId,
     pub work_item: WorkItemId,
@@ -235,20 +235,20 @@ pub enum ArtifactState {
     Retained,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Artifact {
     pub id: ArtifactId,
     pub attempt: AttemptId,
     pub name: String,
     pub available: bool,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RevisionStatus {
     pub revision: String,
     pub state: State,
     pub reason: Option<String>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RunInspection {
     pub run: RunSummary,
     pub revisions: Vec<RevisionStatus>,

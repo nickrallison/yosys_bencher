@@ -1,9 +1,10 @@
 # Storage and UI data design
 
-Status: the initial backend is implemented through the shared UI data boundary.
+Status: the initial backend and five-mode UI are implemented.
 See [backend usage](backend.md) for the concrete API, defaults, and scope. Rust
 snippets below describe the design boundaries; exact method signatures are in
-code. Detailed frontend work and explicitly deferred analyses remain future work.
+code. See [UI usage](ui.md) for the workspace, sidebar, and Plotly integration.
+Explicitly deferred analyses remain future work.
 
 Selected approaches: `rusqlite` for database access and `inventory` for distributed
 adapter registration. Shared browser-safe values live in `crates/ui-types`.

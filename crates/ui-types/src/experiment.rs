@@ -10,7 +10,7 @@ pub enum FieldKind {
     Boolean,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InputField {
     pub path: String,
     pub label: String,
@@ -55,7 +55,7 @@ pub enum FilterOperator {
     Missing,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Filter {
     pub field: String,
     pub operator: FilterOperator,
@@ -126,14 +126,14 @@ impl Filter {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InputDescription {
     pub id: crate::store::InputId,
     pub label: String,
     pub parameters: BTreeMap<String, Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Page<T> {
     pub total: usize,
     pub offset: usize,
@@ -152,14 +152,14 @@ impl<T> Page<T> {
 }
 
 use std::time::{Duration, SystemTime};
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AttemptOutcome<O> {
     Success(O),
     Failure(String),
     Unsupported(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AttemptRecord<O> {
     pub started_at: SystemTime,
     pub duration: Duration,

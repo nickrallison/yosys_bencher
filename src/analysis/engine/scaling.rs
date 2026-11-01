@@ -82,6 +82,7 @@ pub(super) fn scaling<I: BenchmarkIn, O>(
             let mut dimensions = group.dimensions.clone();
             dimensions.insert("revision".into(), json!(revision));
             series.push(Series {
+                partition: group.partition.clone(),
                 id: id(&(&group.id, revision, "scaling")),
                 label: format!("{} / {}", group.label, revision),
                 dimensions,

@@ -7,6 +7,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 pub use yosys_bench_ui_types::store::*;
 pub trait StoredProcedure: Procedure + 'static {
+    const DEFAULT_METRIC: Option<&'static str> = None;
     const STORAGE_KEY: &'static str;
     const INPUT_SCHEMA: u32 = 1;
     const OUTPUT_SCHEMA: u32 = 1;

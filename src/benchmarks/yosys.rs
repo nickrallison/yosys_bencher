@@ -114,6 +114,7 @@ impl<C: BenchmarkIn> BenchmarkIn for YosysBenchmarkInput<C> {
     }
 }
 impl<P: YosysProcedure + 'static> crate::store::StoredProcedure for YosysBenchmark<P> {
+    const DEFAULT_METRIC: Option<&'static str> = Some("runtime");
     const STORAGE_KEY: &'static str = P::STORAGE_KEY;
     const MEASUREMENT_CONTRACT: &'static str = "yosys.v2.wall-and-statistics";
 }

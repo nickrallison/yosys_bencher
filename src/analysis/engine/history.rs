@@ -109,6 +109,7 @@ pub(super) fn history(
         .map(|g| {
             let eligible = membership(g, revisions, data, metric, plan.coverage);
             Series {
+                partition: g.partition.clone(),
                 id: g.id.clone(),
                 label: g.label.clone(),
                 dimensions: g.dimensions.clone(),

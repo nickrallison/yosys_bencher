@@ -132,7 +132,7 @@ pub enum FormulaStage {
     Input,
     Suite,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MetricSource {
     Path,
@@ -143,7 +143,7 @@ pub enum MetricSource {
         stage: FormulaStage,
     },
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MetricSpec {
     pub path: String,
     pub label: String,

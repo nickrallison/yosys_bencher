@@ -124,6 +124,7 @@ pub(crate) fn evaluate<I: BenchmarkIn, O: BenchmarkOut>(
         plan: plan.clone(),
     };
     let mut response = AnalysisResponse {
+        groups: vec![],
         id: id(&snapshot),
         snapshot,
         definition: frame.definition.clone(),
@@ -259,6 +260,15 @@ pub(crate) fn evaluate<I: BenchmarkIn, O: BenchmarkOut>(
             0.0
         });
     }
+    response.groups = groups
+        .iter()
+        .map(|g| SeriesDescription {
+            partition: g.partition.clone(),
+            id: g.id.clone(),
+            label: g.label.clone(),
+            dimensions: g.dimensions.clone(),
+        })
+        .collect();
     match &plan.operation {
         Operation::History => response.series = history(&groups, revisions, &data, &metric, plan),
         Operation::Changes { ranking, .. } => {

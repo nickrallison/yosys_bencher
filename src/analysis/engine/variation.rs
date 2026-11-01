@@ -10,6 +10,7 @@ fn distribution(
     contributors: Vec<String>,
 ) -> Distribution {
     Distribution {
+        dimensions: BTreeMap::new(),
         id: id(&(population, &revision, input, &partition, run)),
         population,
         revision,
@@ -130,6 +131,7 @@ pub(super) fn variation(
                         values.iter().map(|d| d.estimate.id.clone()).collect(),
                     );
                     d.id = id(&(&d.id, &g.id));
+                    d.dimensions = g.dimensions.clone();
                     d
                 })
             })

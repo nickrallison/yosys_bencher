@@ -5,7 +5,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum Operation {
     #[default]
@@ -39,14 +39,14 @@ pub enum CoveragePolicy {
     #[default]
     Strict,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum RunTreatment {
     Separate,
     Summaries { reduction: Reduction },
     Pool,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", content = "field", rename_all = "snake_case")]
 pub enum Dimension {
     Input,
@@ -73,20 +73,20 @@ impl ChangeKind {
         v.is_finite().then_some(v)
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Normalization {
     pub revision: String,
     pub kind: ChangeKind,
     pub runs: Option<RunSelection>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum Comparison {
     Pair { baseline: String, current: String },
     AdjacentSelected,
     PreviousMeasured,
 }
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct Threshold {
     pub value: f64,
     pub kind: ChangeKind,
@@ -115,25 +115,25 @@ pub enum ChangeClass {
     Unclassified,
     Unavailable,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Cohort {
     pub baseline: String,
     pub current: String,
     pub threshold: Threshold,
     pub class: ChangeClass,
 }
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FilterStage {
     Attempt,
     Input,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CalculationFilter {
     pub stage: FilterStage,
     pub filter: Filter,
 }
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct Paging {
     pub offset: usize,
     pub limit: usize,
@@ -146,7 +146,7 @@ impl Default for Paging {
         }
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AnalysisPlan {
     pub selection: ResultSelection,
     #[serde(default)]

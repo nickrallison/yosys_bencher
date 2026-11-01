@@ -1,7 +1,7 @@
 # Storage and analysis backend
 
-The backend is implemented through the UI data boundary. The frontend can reuse
-V1's workspace and charts; no frontend is included here.
+The backend and [Dioxus results UI](ui.md) are implemented. The UI reuses V1's
+workspace styling and Plotly bridge.
 
 - `store::SqliteStore` registers workloads and incrementally writes typed results.
 - `analysis::Backend` provides discovery, selection, analysis, and inspection.
@@ -126,7 +126,7 @@ individual references report whether their files still exist.
 
 `StoreError` covers local errors. `ApiError::from(&error)` maps them to shared
 error values, including control-specific validation errors and expired snapshots,
-for a future Dioxus server-function wrapper.
+for the Dioxus server-function wrapper.
 
 ## Adding a procedure
 
@@ -153,5 +153,5 @@ adapter is unavailable remain visible in discovery.
 This uses one local SQLite database with a busy timeout and WAL readers/writer
 coordination. Schema version 1 is created automatically; newer versions are
 rejected. There is no V1 importer, automatic crash recovery, or persistent result
-replay. The larger acceptance fixture, UI, metric relationships, adaptive sampling,
+replay. The larger acceptance fixture, metric relationships, adaptive sampling,
 and statistical decision methods remain deferred.

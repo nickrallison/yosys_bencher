@@ -109,6 +109,7 @@ impl BenchmarkIn for McmInput {
 }
 
 impl crate::store::StoredProcedure for McmProcedure {
+    const DEFAULT_METRIC: Option<&'static str> = Some("optimized.runtime");
     const STORAGE_KEY: &'static str = "mcm";
     const MEASUREMENT_CONTRACT: &'static str = "mcm.v2.wall-cpu-area";
 }
