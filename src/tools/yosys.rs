@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     path::{Component, Path, PathBuf},
     process::Command,
     time::Duration,
@@ -11,11 +11,13 @@ mod capture;
 pub mod design;
 mod plan;
 mod statistics;
+mod timings;
 mod workspace;
 pub use capture::YosysCapture;
 use design::{Design, SourceFile};
 pub use plan::YosysPlan;
 pub use statistics::Statistics;
+pub use timings::{PassTiming, YosysTimings};
 pub use workspace::PreparedYosysJob;
 
 type Result<T> = std::result::Result<T, ExperimentError>;
@@ -43,7 +45,6 @@ pub struct YosysJob {
     pub design: Design,
     pub assets: Vec<SourceFile>,
     pub stages: Vec<YosysStage>,
-    pub timings: bool,
 }
 
 impl YosysJob {
@@ -81,7 +82,7 @@ impl YosysJob {
 pub struct YosysRun {
     pub process: ProcessOutput,
     pub stage_logs: BTreeMap<String, String>,
-    pub pass_timings: HashMap<String, Duration>,
+    pub timings: YosysTimings,
 }
 
 impl YosysRun {
@@ -97,9 +98,10 @@ impl YosysRun {
     }
 
     pub fn pass_time(&self, name: &str) -> Result<Duration> {
-        self.pass_timings
+        self.timings
+            .passes
             .get(name)
-            .copied()
+            .map(|pass| pass.runtime)
             .ok_or_else(|| ExperimentError::Parse(format!("missing Yosys pass timing {name}")))
     }
 }
@@ -137,7 +139,7 @@ impl YosysRunner {
         label: &str,
         context: &mut RunContext,
     ) -> Result<YosysRun> {
-        let captured = self.capture(job, "run.ys", label, *job.plan.timings(), context)?;
+        let captured = self.capture(job, "run.ys", label, true, context)?;
         YosysRun::decode(&job.plan, captured)
     }
 

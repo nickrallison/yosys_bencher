@@ -95,12 +95,19 @@ pub fn analyze_frame<I: BenchmarkIn, O: BenchmarkOut>(
         .iter()
         .map(|r| r.id().id().clone())
         .collect::<Vec<_>>();
+    let metrics = crate::metrics::catalog(frame.attempts.iter().filter_map(|attempt| {
+        match &attempt.record.as_ref()?.outcome {
+            AttemptOutcome::Success(output) => Some(output),
+            _ => None,
+        }
+    }));
     evaluate(
         frame,
         plan,
         &revisions,
         plan.normalization.as_ref().map(|_| frame),
         plan.cohort.as_ref().map(|_| frame),
+        &metrics,
     )
     .map(|e| e.response)
 }
@@ -111,9 +118,9 @@ pub(crate) fn evaluate<I: BenchmarkIn, O: BenchmarkOut>(
     revisions: &[String],
     baseline: Option<&ResultFrame<I, O>>,
     cohort_frame: Option<&ResultFrame<I, O>>,
+    metrics: &[MetricSpec],
 ) -> Result<Evaluation> {
-    let metrics = O::analysis_metrics();
-    let metric = validate::<I>(plan, &metrics)?;
+    let metric = validate::<I>(plan, metrics)?;
     for supplemental in [baseline, cohort_frame].into_iter().flatten() {
         if supplemental.generation != frame.generation {
             return Err(StoreError::Expired);
@@ -155,7 +162,7 @@ pub(crate) fn evaluate<I: BenchmarkIn, O: BenchmarkOut>(
         changes: Page::from_items([], 0, 0),
         change_summaries: vec![],
         distributions: Page::from_items([], 0, 0),
-        coverage: coverage(frame, plan, metric.as_ref(), &metrics),
+        coverage: coverage(frame, plan, metric.as_ref(), metrics),
         warnings: vec![],
     };
     if !frame.newer_unfinished.is_empty() {
@@ -183,7 +190,7 @@ pub(crate) fn evaluate<I: BenchmarkIn, O: BenchmarkOut>(
     } else {
         metric.reference
     };
-    let (per_run, mut data) = estimates(frame, &metric, &metrics, plan);
+    let (per_run, mut data) = estimates(frame, &metric, metrics, plan);
     let mut catalog = BTreeMap::<String, Estimated>::new();
     for d in per_run.iter().chain(data.values()) {
         catalog.insert(d.estimate.id.clone(), d.clone());
@@ -191,7 +198,7 @@ pub(crate) fn evaluate<I: BenchmarkIn, O: BenchmarkOut>(
     let mut groups = groups(frame, plan)?;
     if let Some(cohort) = &plan.cohort {
         let reference = cohort_frame.ok_or_else(|| invalid("cohort", "missing endpoint data"))?;
-        let (_, cohort_data) = estimates(reference, &metric, &metrics, plan);
+        let (_, cohort_data) = estimates(reference, &metric, metrics, plan);
         let mut active = BTreeSet::new();
         for (key, a) in &cohort_data {
             if key.1 != cohort.baseline {
@@ -226,7 +233,7 @@ pub(crate) fn evaluate<I: BenchmarkIn, O: BenchmarkOut>(
     }
     if let Some(normalization) = &plan.normalization {
         let baseline = baseline.ok_or_else(|| invalid("normalization", "missing baseline data"))?;
-        let (_, mut baseline_data) = estimates(baseline, &metric, &metrics, plan);
+        let (_, mut baseline_data) = estimates(baseline, &metric, metrics, plan);
         for d in baseline_data.values_mut() {
             d.estimate.id = id(&("baseline", &d.estimate.id));
             catalog.insert(d.estimate.id.clone(), d.clone());

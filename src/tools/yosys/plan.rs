@@ -8,7 +8,6 @@ pub struct YosysPlan {
     directories: Vec<PathBuf>,
     includes: Vec<(PathBuf, PathBuf)>,
     stages: Vec<String>,
-    timings: bool,
 }
 
 impl YosysJob {
@@ -94,7 +93,6 @@ impl YosysJob {
             directories,
             includes,
             stages: job.stages.iter().map(|stage| stage.name.clone()).collect(),
-            timings: job.timings,
         })
     }
 }

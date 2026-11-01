@@ -3,7 +3,7 @@ use crate::{
     metrics::{MetricDescriptor, MetricType, MetricValue},
     tools::{
         perf::PerfMeasurements,
-        yosys::{PreparedYosysJob, Yosys, YosysJob, YosysRun, YosysRunner, design},
+        yosys::{PreparedYosysJob, Yosys, YosysJob, YosysRun, YosysRunner, YosysTimings, design},
     },
 };
 use contracts::contract_trait;
@@ -21,7 +21,9 @@ pub fn measure<M>(
 ) -> Result<YosysBenchmarkOutput<M>> {
     let run = runner.measure(job, label, context)?;
     let measurements = parse(&run)?;
-    Ok(YosysBenchmarkOutput::new(run.process.elapsed, measurements).with_perf(run.process.perf))
+    Ok(YosysBenchmarkOutput::new(run.process.elapsed, measurements)
+        .with_perf(run.process.perf)
+        .with_timings(run.timings))
 }
 
 pub trait YosysProcedure {
@@ -128,6 +130,9 @@ pub struct YosysBenchmarkOutput<M = ()> {
     #[get = "pub"]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     perf: Option<PerfMeasurements>,
+    #[get = "pub"]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    timings: Option<YosysTimings>,
 }
 
 impl<M> YosysBenchmarkOutput<M> {
@@ -136,11 +141,17 @@ impl<M> YosysBenchmarkOutput<M> {
             runtime,
             measurements,
             perf: None,
+            timings: None,
         }
     }
 
     pub fn with_perf(mut self, perf: Option<PerfMeasurements>) -> Self {
         self.perf = perf;
+        self
+    }
+
+    pub fn with_timings(mut self, timings: YosysTimings) -> Self {
+        self.timings = Some(timings);
         self
     }
 
@@ -170,6 +181,11 @@ impl<M: BenchmarkOut> BenchmarkOut for YosysBenchmarkOutput<M> {
                 .into_iter()
                 .map(|m| m.prefixed("perf")),
         );
+        metrics.extend(
+            YosysTimings::analysis_metrics()
+                .into_iter()
+                .map(|m| m.prefixed("timings")),
+        );
         metrics
     }
 
@@ -180,6 +196,10 @@ impl<M: BenchmarkOut> BenchmarkOut for YosysBenchmarkOutput<M> {
             "perf",
             PerfMeasurements::list_metrics(),
         ));
+        metrics.push(MetricDescriptor::group(
+            "timings",
+            YosysTimings::list_metrics(),
+        ));
         metrics
     }
 
@@ -188,7 +208,11 @@ impl<M: BenchmarkOut> BenchmarkOut for YosysBenchmarkOutput<M> {
             "runtime" => Some(MetricValue::Duration(self.runtime)),
             "measurements" => Some(self.measurements.metrics()),
             "perf" => self.perf.as_ref().map(BenchmarkOut::metrics),
+            "timings" => self.timings.as_ref().map(BenchmarkOut::metrics),
             _ => None,
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

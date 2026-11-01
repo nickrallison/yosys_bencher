@@ -15,6 +15,11 @@ pub use yosys_bench_ui_types::api::*;
 pub trait ExperimentAdapter: Send + Sync {
     fn contract(&self) -> Contract;
     fn metrics(&self) -> Vec<MetricSpec>;
+    fn stored_metrics(
+        &self,
+        store: &SqliteStore,
+        experiment: ExperimentId,
+    ) -> Result<Vec<MetricSpec>>;
     fn default_metric(&self) -> Option<String>;
     fn fields(&self) -> Vec<InputField>;
     fn inputs(
@@ -42,7 +47,8 @@ pub trait ExperimentAdapter: Send + Sync {
 struct TypedAdapter<P>(PhantomData<fn() -> P>);
 impl<P: StoredProcedure> TypedAdapter<P> {
     fn evaluate(&self, store: &SqliteStore, plan: &AnalysisPlan) -> Result<engine::Evaluation> {
-        engine::validate::<P::Input>(plan, &P::Output::analysis_metrics())?;
+        let metrics = self.stored_metrics(store, plan.selection.experiment)?;
+        engine::validate::<P::Input>(plan, &metrics)?;
         let mut selection = plan.selection.clone();
         if let Operation::Changes {
             comparison: Comparison::Pair { baseline, current },
@@ -88,8 +94,14 @@ impl<P: StoredProcedure> TypedAdapter<P> {
         } else {
             None
         };
-        let result =
-            engine::evaluate(&frame, plan, &revisions, baseline.as_ref(), cohort.as_ref())?;
+        let result = engine::evaluate(
+            &frame,
+            plan,
+            &revisions,
+            baseline.as_ref(),
+            cohort.as_ref(),
+            &metrics,
+        )?;
         if store.generation()? != frame.generation {
             return Err(StoreError::Expired);
         }
@@ -102,6 +114,15 @@ impl<P: StoredProcedure> ExperimentAdapter for TypedAdapter<P> {
     }
     fn metrics(&self) -> Vec<MetricSpec> {
         P::Output::analysis_metrics()
+    }
+    fn stored_metrics(
+        &self,
+        store: &SqliteStore,
+        experiment: ExperimentId,
+    ) -> Result<Vec<MetricSpec>> {
+        Ok(crate::metrics::catalog(
+            store.successful_outputs::<P>(experiment)?.iter(),
+        ))
     }
     fn default_metric(&self) -> Option<String> {
         P::DEFAULT_METRIC
@@ -350,7 +371,7 @@ impl Backend {
         let (metrics, fields, operations, unsupported) =
             match self.registry.adapter(&self.store, id) {
                 Ok(a) => (
-                    a.metrics(),
+                    a.stored_metrics(&self.store, id)?,
                     a.fields(),
                     vec!["history", "changes", "scaling", "variation", "coverage"]
                         .into_iter()

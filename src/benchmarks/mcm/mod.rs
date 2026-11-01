@@ -189,7 +189,6 @@ impl Procedure for McmProcedure {
         let runner = YosysRunner::new(&tools.yosys)?;
         let baseline = runner.prepare(&SynthFlow::job(&design, &input.synthesis)?, context)?;
         let mut job = YosysJob::new(design)?;
-        job.timings = true;
         job.stage_with_statistics(
             "mcm",
             vec![format!(

@@ -10,7 +10,11 @@ pub fn describe(descriptors: &[MetricDescriptor]) -> Vec<MetricSpec> {
             };
             match descriptor {
                 MetricDescriptor::Value {
-                    desc, kind, unit, ..
+                    desc,
+                    kind,
+                    unit,
+                    direction,
+                    ..
                 } => {
                     let mut inputs = Reduction::estimates();
                     inputs.extend([Reduction::Sum, Reduction::Count, Reduction::StdDev]);
@@ -20,7 +24,7 @@ pub fn describe(descriptors: &[MetricDescriptor]) -> Vec<MetricSpec> {
                         description: (*desc).into(),
                         kind: kind.clone(),
                         unit: (*unit).into(),
-                        direction: Direction::Unspecified,
+                        direction: *direction,
                         domain: if matches!(kind, MetricType::UInt | MetricType::Duration) {
                             Domain::Nonnegative
                         } else {
@@ -39,6 +43,8 @@ pub fn describe(descriptors: &[MetricDescriptor]) -> Vec<MetricSpec> {
                 MetricDescriptor::Group { children, .. } => visit(out, &path, children),
                 // A nested collection is not a repetition axis. Authors must expose an explicit scalar projection.
                 MetricDescriptor::Samples { .. } => (),
+                // Named keys are added by describe_dynamic from recorded values.
+                MetricDescriptor::Map { .. } => (),
             }
         }
     }
@@ -63,4 +69,70 @@ pub fn scalar(output: &impl crate::experiment::BenchmarkOut, path: &str) -> Opti
         _ => return None,
     };
     value.is_finite().then_some(value)
+}
+
+/// Expand named-record metric maps using keys actually present in an output.
+/// Ordinary descriptors keep the procedure's declared analysis metadata.
+pub fn describe_dynamic(descriptors: &[MetricDescriptor], value: &MetricValue) -> Vec<MetricSpec> {
+    fn visit(
+        out: &mut Vec<MetricSpec>,
+        prefix: &str,
+        descriptors: &[MetricDescriptor],
+        value: &MetricValue,
+        dynamic: bool,
+    ) {
+        let MetricValue::Group(values) = value else {
+            return;
+        };
+        for descriptor in descriptors {
+            let Some(value) = values.get(descriptor.name()) else {
+                continue;
+            };
+            let path = if prefix.is_empty() {
+                descriptor.name().into()
+            } else {
+                format!("{prefix}.{}", descriptor.name())
+            };
+            match descriptor {
+                MetricDescriptor::Value { .. } if dynamic => {
+                    out.extend(
+                        describe(std::slice::from_ref(descriptor))
+                            .into_iter()
+                            .map(|m| m.prefixed(prefix)),
+                    );
+                }
+                MetricDescriptor::Group { children, .. } => {
+                    visit(out, &path, children, value, dynamic)
+                }
+                MetricDescriptor::Map { children, .. } => {
+                    if let MetricValue::Group(records) = value {
+                        for (name, record) in records {
+                            visit(out, &format!("{path}.{name}"), children, record, true);
+                        }
+                    }
+                }
+                _ => (),
+            }
+        }
+    }
+    let mut out = Vec::new();
+    visit(&mut out, "", descriptors, value, false);
+    out
+}
+
+pub fn catalog<'a, O: crate::experiment::BenchmarkOut + 'a>(
+    outputs: impl IntoIterator<Item = &'a O>,
+) -> Vec<MetricSpec> {
+    let mut metrics = O::analysis_metrics();
+    let mut known: std::collections::BTreeSet<_> = metrics.iter().map(|m| m.path.clone()).collect();
+    let mut observed = std::collections::BTreeMap::new();
+    for output in outputs {
+        for metric in describe_dynamic(&O::list_metrics(), &output.metrics()) {
+            if known.insert(metric.path.clone()) {
+                observed.insert(metric.path.clone(), metric);
+            }
+        }
+    }
+    metrics.extend(observed.into_values());
+    metrics
 }

@@ -21,15 +21,6 @@ impl YosysCapture {
 
 impl YosysRun {
     pub fn decode(plan: &YosysPlan, captured: YosysCapture) -> Result<Self> {
-        #[derive(serde::Deserialize)]
-        struct Timing {
-            runtime_ns: u64,
-        }
-        #[derive(serde::Deserialize)]
-        struct Report {
-            passes: HashMap<String, Timing>,
-        }
-
         captured.validate_stages(plan)?;
         let stage_logs = plan
             .stages()
@@ -41,26 +32,15 @@ impl YosysRun {
                 Ok((name.clone(), text.to_owned()))
             })
             .collect::<Result<_>>()?;
-        let pass_timings = if *plan.timings() {
-            let bytes = captured
-                .files
-                .get(Path::new("timing.json"))
-                .ok_or_else(|| ExperimentError::Parse("missing Yosys pass timings".into()))?;
-            let report: Report = serde_json::from_slice(bytes).map_err(|error| {
-                ExperimentError::Parse(format!("invalid Yosys pass timings: {error}"))
-            })?;
-            report
-                .passes
-                .into_iter()
-                .map(|(name, timing)| (name, Duration::from_nanos(timing.runtime_ns)))
-                .collect()
-        } else {
-            HashMap::new()
-        };
+        let bytes = captured
+            .files
+            .get(Path::new("timing.json"))
+            .ok_or_else(|| ExperimentError::Parse("missing Yosys pass timings".into()))?;
+        let timings = YosysTimings::parse(bytes)?;
         Ok(Self {
             process: captured.process,
             stage_logs,
-            pass_timings,
+            timings,
         })
     }
 }

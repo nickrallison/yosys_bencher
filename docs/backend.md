@@ -74,6 +74,27 @@ Scaling requires an X parameter and a choice about reducing remaining varying
 parameters. Variation names within-run, between-run, or across-input populations.
 Coverage can omit the metric.
 
+## Yosys pass timings
+
+Every measured Yosys job runs with `--perffile .yosys-logs/timing.json`.
+`YosysBenchmarkOutput` retains the parsed report in its optional `timings` field:
+Yosys generator/version, total internal CPU time, and each pass's self CPU time
+and call count. This applies to timing, synthesis, and both MCM flows. The existing
+`runtime` remains elapsed wall time. Diagnostic profiling/netlist executions are
+separate from these measurements.
+
+The raw report is retained at `attempt-*/logs/<label>/timing.json` when logs are
+enabled. Analysis discovers recorded pass names from successful stored outputs,
+including plugin passes. Metric paths include `timings.total`,
+`timings.passes.opt.runtime`, and `timings.passes.opt.calls`; MCM prefixes these
+with `baseline.` or `optimized.`. Runtimes are exposed in seconds. Names containing
+`.` or `%` use `%2E` or `%25` in metric path segments; raw output keys stay intact.
+
+Older payloads remain readable with no timings. A missing pass or historical
+measurement produces a missing value, never an invented zero. Existing artifacts
+are not backfilled into old payloads. New jobs require a valid timing report;
+a missing or malformed report fails that attempt and the runner continues.
+
 ## Selection and estimates
 
 Input matching uses typed equality and persistent IDs. Reordered inputs reuse
@@ -134,6 +155,10 @@ Implement `Procedure` and `StoredProcedure`, declare `BenchmarkIn` fields and
 parameter values, and supply metrics through `BenchmarkOut`. The existing metric
 macro remains available for simple scalar outputs. Override `analysis_metrics`
 when directions, domains, reductions, or formula stages need more detail.
+
+Use `MetricDescriptor::map` for named records such as Yosys pass statistics.
+Their scalar child descriptors are expanded from keys in successful stored
+outputs, alongside the statically declared analysis metrics.
 
 Register the adapter beside the procedure:
 

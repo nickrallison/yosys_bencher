@@ -418,6 +418,27 @@ impl SqliteStore {
         }
         Ok(ordered)
     }
+    /// Successful payloads across the experiment, including unselected revisions.
+    /// Used to discover named metric maps without making absent values into zeros.
+    pub(crate) fn successful_outputs<P: StoredProcedure>(
+        &self,
+        experiment: ExperimentId,
+    ) -> Result<Vec<P::Output>> {
+        self.validate::<P>(experiment)?;
+        let mut statement = self.connection.prepare(
+            "SELECT a.record FROM attempts a JOIN work_items w ON w.id=a.work_item JOIN runs r ON r.id=w.run WHERE r.experiment=? AND coalesce(json_extract(r.plan,'$.purpose'),'measurement')='measurement' AND a.outcome='success' ORDER BY a.id"
+        )?;
+        let records = statement.query_map([experiment.0], |row| row.get::<_, String>(0))?;
+        let mut outputs = Vec::new();
+        for record in records {
+            let record: crate::experiment::AttemptRecord<P::Output> = decode(&record?)?;
+            if let crate::experiment::AttemptOutcome::Success(output) = record.outcome {
+                outputs.push(output);
+            }
+        }
+        Ok(outputs)
+    }
+
     pub fn frame<P: StoredProcedure>(
         &self,
         selection: &ResultSelection,

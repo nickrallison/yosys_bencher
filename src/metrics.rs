@@ -32,8 +32,13 @@ pub enum MetricDescriptor {
         kind: MetricType,
         unit: &'static str,
         random: bool,
+        direction: Direction,
     },
     Group {
+        name: &'static str,
+        children: Vec<MetricDescriptor>,
+    },
+    Map {
         name: &'static str,
         children: Vec<MetricDescriptor>,
     },
@@ -46,9 +51,10 @@ pub enum MetricDescriptor {
 impl MetricDescriptor {
     pub fn name(&self) -> &'static str {
         match self {
-            Self::Value { name, .. } | Self::Group { name, .. } | Self::Samples { name, .. } => {
-                name
-            }
+            Self::Value { name, .. }
+            | Self::Group { name, .. }
+            | Self::Map { name, .. }
+            | Self::Samples { name, .. } => name,
         }
     }
 
@@ -58,6 +64,9 @@ impl MetricDescriptor {
             (Self::Group { children, .. }, MetricValue::Group(values)) => {
                 matches_group(children, values)
             }
+            (Self::Map { children, .. }, MetricValue::Group(values)) => values.values().all(|value| {
+                matches!(value, MetricValue::Group(fields) if matches_group(children, fields))
+            }),
             (Self::Samples { children, .. }, MetricValue::Samples(samples)) => {
                 samples.iter().all(|sample| match sample {
                     MetricValue::Group(values) => matches_group(children, values),
@@ -81,11 +90,24 @@ impl MetricDescriptor {
             kind,
             unit,
             random,
+            direction: Direction::Unspecified,
         }
     }
 
     pub fn group(name: &'static str, children: Vec<Self>) -> Self {
         Self::Group { name, children }
+    }
+
+    pub fn with_direction(mut self, value: Direction) -> Self {
+        if let Self::Value { direction, .. } = &mut self {
+            *direction = value;
+        }
+        self
+    }
+
+    /// Named records whose keys are discovered from stored outputs.
+    pub fn map(name: &'static str, children: Vec<Self>) -> Self {
+        Self::Map { name, children }
     }
 
     pub fn samples(name: &'static str, children: Vec<Self>) -> Self {
