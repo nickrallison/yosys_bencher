@@ -25,9 +25,10 @@ owns aggregation and statistical interpretation. The UI owns interaction and
 presentation. V1's chart and table presentation is a useful starting point; its
 sidebar and aggregation controls need further design.
 
-This document covers the data needed for those responsibilities. Detailed sidebar
-design, suite-version comparison screens, saved views, and adaptive sampling are
-later work.
+This document covers the data and analysis contracts needed for those
+responsibilities, including proposed sidebar modes. Detailed visual layout,
+suite-version comparison screens, saved views, and adaptive sampling are later
+work.
 
 ## Use cases
 
@@ -128,6 +129,24 @@ direction where meaningful, normalization and formula rules, input parameter
 descriptors, and observation provenance. These belong in experiment/analysis
 interfaces, not per-experiment UI code. A practical change threshold is a display
 or analysis choice; it does not by itself establish statistical significance.
+
+### Proposed analysis modes
+
+Start with History, Changes, Scaling, Variation, and Coverage in the analysis
+selector. These are modes within the existing workspace, not separate pages or
+benchmark-specific providers. Metric relationships can follow later.
+
+Keep experiment/version, revisions, inputs, environment/configuration, and run
+selection shared. Each mode exposes only its relevant controls: normalization in
+History, endpoints and thresholds in Changes, an X parameter in Scaling, and a
+named sample population in Variation. Coverage must work without selecting a
+scalar metric. Metric availability can be an additional coverage layer.
+
+Preserve compatible dataset choices when switching modes. Validate mode-specific
+settings and explain any required changes rather than silently changing the
+selected workload. Keep the current recipe visible, including coverage policy,
+run treatment, and any normalization or calculation exclusions. Plot styling
+remains separate from analysis settings.
 
 ## Persistent identities
 
@@ -460,6 +479,7 @@ source-version policy
 revision order and selection: all, range, or explicit IDs
 input selection
 execution environment and measurement contract
+execution-option filters and comparison partitions
 run-selection policy
 ```
 
@@ -477,16 +497,17 @@ every possible revision/input/sample combination.
 ## Selecting runs and repetitions
 
 Supported policies should include explicit run IDs, latest completed work item
-per revision/input, and all matching runs. Multiple runs remain separate in the
-returned frame. Environment selection is explicit; the proposed default is one
-environment, with mixed environments requiring a deliberate choice.
+per revision/input within each retained environment/configuration partition, and
+all matching runs. Multiple runs remain separate in the returned frame.
+Environment selection is explicit; the proposed default is one environment,
+with mixed environments requiring a deliberate choice.
 
 For the proposed normal history policy:
 
 1. Restrict candidates by experiment, version compatibility, environment,
-   measurement contract, and measurement purpose.
-2. For each revision/input, choose the latest completed work item using a recorded
-   ordering key with a stable ID tie-breaker.
+   execution-option filters, measurement contract, and measurement purpose.
+2. Within each retained partition, for each revision/input, choose the latest
+   completed work item using a recorded ordering key with a stable ID tie-breaker.
 3. Retain all its repetitions and their outcomes. Completion is independent of
    measurement success; a failed newer execution must not disappear in favor of
    an older successful one.
@@ -505,30 +526,86 @@ inspection. Never add retries to the sample count implicitly.
 
 ## Metrics, analysis, and UI responses
 
-`BenchmarkOut` remains the source of metric descriptors and values. Shared metric
-metadata should also describe stable nested paths, supported reductions, and
-appropriate defaults. The existing `random` flag alone does not establish valid
-aggregation or uncertainty calculations.
+### Capabilities and plan validation
+
+`BenchmarkOut` remains the source of metric descriptors and values. Shared
+descriptors need the following information so the generic UI can offer valid
+controls:
+
+| Descriptor | Required information |
+| --- | --- |
+| Metric | Stable nested path, label, description, value type, unit, valid domain, and improvement direction: lower, higher, or unspecified |
+| Reduction | Supported repetition, run, and input reductions; defaults; minimum counts; domain requirements; and resulting units |
+| Formula | Operand paths, evaluation stage, matching rules, valid denominators, resulting units, and any meaningful reference value |
+| Dimension | Stable field path, label, type, ordering, and supported filtering, grouping, and X-axis roles |
+| Operation | Required metrics/dimensions, supported transformations, defaults, and result shape |
+
+The existing `random` flag alone does not establish valid aggregation or
+uncertainty calculations. Reductions are capabilities per axis, not one universal
+menu. For example, count returns inputs or observations rather than the metric's
+unit; an optional geometric mean for positive normalized ratios requires strictly
+positive contributors. Specify percentile interpolation and use sample standard
+deviation for repetition estimates as described below.
+
+Validate the complete plan on the server, including combinations of operation,
+metric, formula, reduction, and grouping. Return structured errors associated with
+the relevant control. Descriptions should let the UI explain unavailable choices;
+selection-dependent constraints can be checked during analysis. Do not silently
+substitute a reduction or discard invalid values. Domain failures retain a reason
+and participate in the chosen coverage policy.
 
 Keep absent optional metrics distinct from failed attempts, unsupported inputs,
 pending work, and exclusions. Nested `MetricValue::Samples` also need a declared
 meaning: a collection of phases or components is not automatically a set of
 independent benchmark repetitions.
 
-An analysis plan contains the dataset selection, metric paths, repetition
-reduction, treatment of multiple runs, input reduction, series grouping, and
-coverage policy. Uncertainty options can be added later. Axis scale, limits,
-colors, and panel layout remain presentation settings.
+### Operations and result shapes
 
-The reduction order is explicit:
+An analysis plan contains the dataset selection, operation, metric paths,
+repetition reduction, treatment of multiple runs, input reduction, dimensions,
+normalization/comparison settings, staged filters, and coverage policy.
+Uncertainty options can be added later. Selecting the X dimension affects the
+calculation; axis scale, limits, colors, and panel layout remain presentation
+settings.
+
+Operations share typed extraction and estimation stages, but must not all be
+forced into commit/value points:
+
+| Operation | Required settings | Result shape |
+| --- | --- | --- |
+| History | Metric, revision order, optional baseline normalization, input estimator, and series dimensions | Ordered estimates or gaps with units and coverage |
+| Changes | Explicit revision pair or adjacent-revision policy, metric, change formula, threshold, and ranking | Per-input rows with endpoint estimates and changes, matched/unmatched counts, classifications, and optional aggregate contributions |
+| Scaling | Metric, typed X parameter, selected revisions, series dimensions, and treatment of remaining parameters | Typed X values and estimates, preserving distinct revisions and parameter groups |
+| Variation | Metric, revision/input selection, within-run or between-run population, and requested summaries | Counts and summary statistics with paged observations or distributions |
+| Coverage | Selected workload and revisions, run policy, optional metric | Status counts and revision/input cells, including cells with no scalar measurement |
+| Metric relationships, later | Two metrics, common estimate keys, and series dimensions | Paired numeric values with joint coverage and provenance |
+
+Use shared serializable result types with typed values and columns, stable row or
+point IDs, units, and inspection references. Sorting numeric change rows must not
+depend on formatted strings. Return stable sort keys, a declared tie-breaker, and
+matched totals when paging rankings. Distribution responses identify their
+population and quantile or histogram conventions. Relationship points join on
+input, revision, and retained run/configuration dimensions; independently reduced
+or unrelated samples must not be paired by position.
+
+### Estimation and formula order
+
+The common estimation order is explicit. Operations may retain intermediate
+dimensions rather than reducing them:
 
 ```text
-select target inputs and source work items
--> extract a metric from each valid repetition
+resolve target inputs, revisions, partitions, and source work items
+-> extract metric operands from valid repetitions
+-> apply declared repetition-level formulas and calculation filters
 -> summarize repetitions within each revision/input/run
--> summarize runs, if multiple runs were explicitly selected
--> combine input estimates within each series and revision
--> return points, units, coverage, and provenance
+-> summarize runs within each partition, if explicitly requested
+-> evaluate declared estimate-level formulas
+-> apply per-input-estimate calculation filters
+-> normalize against revision baselines or compute per-input changes, if requested
+-> resolve any fixed cohort and coverage requirements
+-> combine input estimates within each retained group, if requested
+-> evaluate declared suite-level formulas over matched operands
+-> return operation-specific results, units, coverage, and provenance
 ```
 
 Give each input equal weight by default when computing a suite mean. More
@@ -536,10 +613,92 @@ repetitions improve that input's estimate; they must not increase its workload
 weight. For multiple runs, require a declared choice such as reducing per-run
 summaries or explicitly pooling observations. Preserve that choice in the plan.
 
-Computed metrics should expose their formulas through shared analysis metadata
-when aggregation order matters. For example, the mean of per-input ratios and
-the ratio of suite means are different calculations. Ratios require matched
-contributors and explicit handling of absent values or invalid denominators.
+Computed metrics expose their evaluation stage through shared metadata. A scalar
+computed in `get_metric` for each output is a repetition-level formula; averaging
+it cannot implement a ratio of reduced operands. A formula requiring a later
+stage must expose its operands and composition rule. Mean per-input ratios and
+ratio of suite means are separate named calculations. The latter reduces both
+operands over the same contributors before division. Formula evaluation must
+preserve observation identities, including reused references.
+
+### Baselines and changes
+
+A revision baseline is separate from a baseline or reference tool embedded in an
+output. History normalization selects an explicit baseline revision, which may be
+outside the displayed range but must be resolved and included in provenance.
+Proposed default: apply the same environment/configuration partitions and
+run-selection policy at baseline and displayed revisions. An override must be
+explicit and visible. Workload and measurement compatibility rules still apply.
+
+Normalize each input estimate against its matched baseline before combining
+inputs. Offer ratio or percent change only where the formula's domain permits it.
+For positive baselines, ratio is `current / baseline` and percent change is
+`100 * (current - baseline) / baseline`. Absolute change is `current - baseline`.
+Zero, absent, or invalid denominators produce an explained unavailable value;
+there is no implicit epsilon or fallback revision. Signed metrics need an
+explicit relative-change convention or use absolute change. Record whether the
+formula measures change or improvement; lower-is-better metrics reverse the
+interpretation of the change sign. A change in an already percentage-valued
+metric must distinguish percentage points from relative percent change.
+
+Changes accepts explicit endpoint revisions or adjacent revisions in the selected
+order. Proposed default: adjacent selected revisions; a missing endpoint creates
+a gap. A separate previous-measured policy may skip gaps, but must identify the
+actual endpoints and skipped revisions. Neither policy claims that a change was
+introduced by one commit when intermediate commits were not measured.
+
+Match endpoints by stable input identity within compatible measurement and
+environment/configuration partitions. Report baseline-only, current-only, and
+invalid pairs separately. Aggregate endpoint comparisons use the same matched
+contributors on both sides, subject to strict/common/available coverage settings.
+Thresholds declare absolute units or relative percent and classify valid pairs
+as improved, within threshold, or worsened only when direction is meaningful.
+They are practical thresholds, not significance tests.
+
+Rankings declare the change measure, direction, limit, and stable ID tie-breaker.
+Largest per-input regression and largest contribution to aggregate change are
+different rankings. Return contributions only for estimators with a defined
+decomposition. For an equal-weight arithmetic mean on a fixed set, each input's
+absolute contribution is its delta divided by the matched input count. Nonlinear
+estimators require their own rule or report contribution as unsupported.
+
+### Filtering, dimensions, and cohorts
+
+Keep three filter roles explicit:
+
+- Dataset predicates select inputs and run metadata before measurement analysis.
+- Calculation filters exclude observations or estimates at a declared stage and
+  change the calculation. Retain excluded identities, counts, and reasons.
+- Display filters hide returned rows or series without changing estimates or
+  coverage denominators. Top-N display is not an input reduction.
+
+Initially support typed input/run predicates, outcome or per-input-estimate
+calculation filters, and display filters for results. Arbitrary raw-repetition
+filters are later work; invalid-domain handling is always explicit. Reject a
+filter whose field or stage is unsupported. V1's outcome and measurement filters
+must not become ambiguous generic predicates in V2. Outcome filters declare
+whether they test individual attempts or a work-item outcome summary.
+
+A query such as "show inputs regressing by more than 5%" may define a fixed
+cohort from explicit comparison endpoints and then plot that cohort's history.
+Resolve its input IDs before applying it across revisions. A per-revision value
+filter instead creates changing membership; label that behavior and apply the
+coverage policy to the exclusions. Calculation exclusions do not silently shrink
+the selected workload or turn strict coverage into available-input coverage.
+
+Dimensions include input identity and declared parameters, revision, run,
+environment, and execution options. Resolve run selection within retained
+environment/configuration partitions so the latest run on one machine cannot
+replace another machine's series. Partition before run reduction; combining
+partitions requires an explicit plan choice. Group previews return typed values,
+missing values, and counts for the same selection used by analysis.
+
+For scaling, remaining varying parameters must be fixed by selection, retained
+as series dimensions, or explicitly reduced. Proposed default: require a choice
+rather than silently average them. Preserve parameter ordering and missing-value
+handling, and preview series counts before producing high-cardinality plots.
+
+### Coverage and inspection
 
 Supported coverage policies should include available inputs at each revision,
 a fixed common input set across selected revisions, and strict coverage with gaps
@@ -547,16 +706,42 @@ for missing required measurements. Proposed history default: strict input
 coverage against the selected target workload. This preserves workload meaning;
 an available-input view remains useful when gaps would otherwise dominate.
 
+Define common-set membership per retained series/partition after required metric
+extraction and calculation filters. Normalized histories also require a valid
+baseline for each contributor; multi-metric operations require joint metric
+availability. Return selected and eligible counts and membership differences so
+a common-set result cannot conceal lost inputs. An empty common set is an
+explained empty result.
+
 Every point includes its estimate or gap, included and selected input counts,
 valid repetition/run counts, exclusion reasons, and references to the selected
 records. A compact response may defer detailed contributor lists to a follow-up
 inspection query. Hiding missing-result details is a display choice and must not
 change the calculation.
 
-Serializable plans and resolved record IDs make responses deterministic. “Latest”
-is a live selection and can change as data arrives; retain its resolved selection
-when reproducing a particular response. Version analysis semantics as well if
-exact replay is later required. Saved-view UX is deferred.
+Coverage mode uses the fixed selected revision/input workload as its denominator
+within each partition, including unmeasured work. Report execution state, attempt
+outcomes, and metric availability separately: one completed work item can contain
+both successful and failed repetitions. Distinguish revision-level build failures,
+unsupported, unfinished/interrupted, and unmeasured work. Label whether a count
+refers to inputs, work items, runs, or attempts; do not present overlapping counts
+as one success-rate denominator. Multiple-run views declare their counting unit.
+
+Inspection proceeds from result row/point to contributing input estimates, run
+summaries, attempts, diagnostics, and artifacts. Requests carry the analysis
+result identity, row/point identity, paging, and sorting. Use stable domain IDs
+rather than chart-array positions. Excluded and unmatched contributors must also
+be inspectable.
+
+Serializable plans and resolved selections make responses reproducible. "Latest"
+is live and can change as data arrives; a drilldown must reuse the original
+resolved records and observed states instead of resolving it again. Record IDs
+alone are insufficient for unfinished attempts that can later complete. Retain
+the result's resolved values/states for inspection, or detect a changed record
+version and return an explicit expired-result response requiring refresh. Do not
+hold a database transaction open across browser requests. Persistent replay and
+saved-view UX are deferred; exact replay would also need versioned analysis
+semantics.
 
 ## Variation and future adaptive sampling
 
@@ -573,6 +758,14 @@ Proposed initial display: per-input mean, sample standard deviation, and count a
 a selected commit, optionally plotted across commits. Sample standard deviation
 is unavailable with fewer than two valid observations. A standard-deviation band
 must be labeled as such; it is not a confidence interval.
+
+Variation responses also provide raw observations through paging, with run and
+attempt IDs, timestamps, repetition indices, and execution order. Return requested
+median, quantiles, and extrema from the same named population; any histogram
+declares its bins and counts. Between-run distributions contain per-run estimates,
+not pooled repetitions. Across-input distributions contain per-input estimates,
+not repetition noise. Mark insufficient samples explicitly. Outliers remain
+visible unless a supported calculation filter deliberately excludes them.
 
 Do not average input standard deviations to create a suite uncertainty band.
 Retain the input/run structure for a later estimator. Cached reference observations
@@ -628,20 +821,50 @@ become necessary, treat them as derived data tied to payload and metric semantic
    frozen run plans, and incremental typed attempt writes.
 3. Implement version projection and explicit run selection, returning dimensions
    and missing-state information with raw observations.
-4. Add distributed adapter registration using `inventory` or `linkme`, generic
-   dispatch, metric/input descriptions, filtering, grouping, and analysis responses.
-5. Add run inspection and clearly scoped standard-deviation displays.
-6. Design suite comparison, saved views, and adaptive measurement separately.
+4. Define shared operation/result types, capability descriptors, and complete
+   plan validation. Add distributed adapter registration using `inventory` or
+   `linkme`, generic dispatch, typed dimension descriptions, and staged filters.
+5. Implement History and Changes with explicit formula stages, revision
+   baselines, matched coverage, and per-input rankings. Add Scaling with explicit
+   treatment of remaining parameters.
+6. Add Coverage and Variation, scoped counts and distributions, and inspection
+   using stable result identities and resolved record states. Connect the five
+   proposed sidebar modes to the shared dataset controls.
+7. Design metric relationships, suite comparison, saved views, and adaptive
+   measurement separately.
 
 The defaults still requiring product decisions are source-version selection,
 environment grouping, latest-work-item ordering, multiple-run aggregation, and
 coverage. Their proposed behavior is documented above rather than hidden in SQL.
-The statistical stopping rule and suite uncertainty model remain open.
+Additional proposed defaults are the shared baseline run policy, adjacent
+selected revisions for changes, and requiring a choice for remaining scaling
+parameters. The statistical stopping rule and suite uncertainty model remain
+open.
 
 Useful acceptance cases include reordered inputs retaining identity; later minor
 versions projecting onto an earlier target; overlapping runs retaining complete
 repetition groups; newer failures remaining visible; interrupted work preserving
 completed observations; and input paging leaving the selected workload unchanged.
+
+Analysis acceptance cases should also cover:
+
+- Mean per-input ratios differing from ratio of suite means, with matched operands.
+- A baseline outside the displayed range, and zero or missing baselines producing
+  explained unavailable values without changing strict coverage.
+- Adjacent-selected comparisons retaining missing endpoints; previous-measured
+  comparisons naming skipped revisions.
+- A fixed regression cohort retaining the same input IDs throughout its history.
+- Display filters leaving estimates and coverage unchanged; calculation filters
+  retaining exclusion reasons and stage information.
+- Latest-run selection preserving separate environment/configuration series.
+- Scaling refusing to silently combine remaining varying parameters.
+- Numeric ranking and pagination retaining stable ordering for tied changes.
+- Coverage retaining unmeasured cells and distinguishing mixed attempt outcomes
+  from work-item completion and missing optional metrics.
+- Variation retaining the named population and reporting unavailable sample SD
+  for fewer than two observations.
+- New results arriving between a chart query and inspection without silently
+  changing the chart's contributors or observed states.
 
 ## Existing code anchors
 
