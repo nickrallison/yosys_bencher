@@ -21,7 +21,7 @@ pub struct ArtifactData {
     pub bytes: Vec<u8>,
 }
 #[cfg(feature = "server")]
-fn backend<T>(
+pub(crate) fn backend<T>(
     f: impl FnOnce(yosys_bench::analysis::Backend) -> yosys_bench::store::Result<T>,
 ) -> Result<T, ApiError> {
     let path = std::env::var_os("YOSYS_BENCH_DATABASE")

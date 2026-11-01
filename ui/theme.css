@@ -150,7 +150,7 @@ td small { display:block; margin-top:4px; }
 .attempt-details p, .attempt-details li { font-size:12px; line-height:1.6; }
 .metadata-json, .artifact-preview { padding:12px; font-size:11px; line-height:1.6; max-height:350px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; background:var(--panel); border-radius:5px; }
 .artifact-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:7px 0; font-size:12px; }
-.artifact-row > span:first-child { flex:1; min-width:150px; overflow-wrap:anywhere; }
+.artifact-row > span:first-child, .artifact-link { flex:1; min-width:150px; overflow-wrap:anywhere; }
 .artifact-row button { min-height:28px; font-size:11px; padding:4px 8px; }
 .artifact-preview { flex-basis:100%; }
 .group-preview { font-size:11px; padding-left:18px; max-height:160px; overflow:auto; }

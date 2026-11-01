@@ -268,11 +268,13 @@ fn ArtifactActions(artifact: Artifact) -> Element {
     let mut loading = use_signal(|| false);
     let id = artifact.id;
     let view_name = artifact.name.clone();
-    let download_name = artifact.name.clone();
+    let url = crate::artifacts::url(id);
     rsx! {
         div { class: "artifact-row",
-            span { "{artifact.name}" }
             if artifact.available {
+                a { class: "artifact-link", href: url.clone(), target: "_blank", rel: "noopener noreferrer",
+                    "{artifact.name}"
+                }
                 button {
                     disabled: loading(),
                     onclick: move |_| {
@@ -285,27 +287,11 @@ fn ArtifactActions(artifact: Artifact) -> Element {
                     },
                     "View text"
                 }
-                button {
-                    disabled: loading(),
-                    onclick: move |_| {
-                        let name = download_name.clone();
-                        loading.set(true);
-                        spawn(async move {
-                            match api::result(api::artifact(id, name).await) {
-                                Ok(file) => {
-                                    let eval = document::eval(
-                                        "const file = await dioxus.recv(); const url = URL.createObjectURL(new Blob([new Uint8Array(file.bytes)], {type: 'application/octet-stream'})); const a = document.createElement('a'); a.href = url; a.download = file.name.split('/').pop(); a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);",
-                                    );
-                                    let _ = eval.send(file);
-                                }
-                                Err(error) => data.set(Some(Err(error))),
-                            }
-                            loading.set(false);
-                        });
-                    },
+                a { href: "{url}?download=true",
                     "Download"
                 }
             } else {
+                span { "{artifact.name}" }
                 span { class: "muted", "Unavailable" }
             }
             if let Some(reply) = data() {
@@ -326,6 +312,45 @@ fn ArtifactActions(artifact: Artifact) -> Element {
         }
     }
 }
+
+#[cfg(all(test, feature = "server"))]
+mod artifact_tests {
+    use super::*;
+
+    fn render(available: bool) -> String {
+        let mut dom = VirtualDom::new_with_props(
+            ArtifactActions,
+            ArtifactActionsProps {
+                artifact: Artifact {
+                    id: ArtifactId(42),
+                    attempt: AttemptId(1),
+                    name: "perf/optimized/flamegraph.svg".into(),
+                    available,
+                },
+            },
+        );
+        dom.rebuild_in_place();
+        dioxus::ssr::render(&dom)
+    }
+
+    #[test]
+    fn artifact_links_open_a_new_tab_and_offer_a_direct_download() {
+        let html = render(true);
+        for expected in [
+            "href=\"/artifacts/42\"",
+            "target=\"_blank\"",
+            "rel=\"noopener noreferrer\"",
+            "href=\"/artifacts/42?download=true\"",
+            "View text",
+        ] {
+            assert!(html.contains(expected), "Missing {expected}: {html}");
+        }
+        let missing = render(false);
+        assert!(missing.contains("Unavailable"));
+        assert!(!missing.contains("href="));
+    }
+}
+
 #[component]
 fn RunDetails(id: RunId, on_work: EventHandler<WorkItemId>) -> Element {
     let data = use_resource(move || async move { api::result(api::inspect_run(id).await) });

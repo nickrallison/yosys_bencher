@@ -182,6 +182,7 @@ fn resolve(path: &Path) -> Result<PathBuf, ExperimentError> {
         }
     }
     if path.is_file() {
+        // llvm-addr2line's invoked symlink name selects its protocol.
         return Ok(std::path::absolute(path)?);
     }
     Err(ExperimentError::Profiling(format!(
@@ -189,3 +190,6 @@ fn resolve(path: &Path) -> Result<PathBuf, ExperimentError> {
         path.display()
     )))
 }
+
+#[cfg(all(test, unix))]
+mod tests;

@@ -58,7 +58,9 @@ immediately. Refresh reloads discovery and analysis after a runner writes data.
 
 Select a chart point or a table's Inspect button to see contributing estimates,
 raw observations, attempts, diagnostics, run configuration, and retained artifacts.
-Artifacts can be previewed as text or downloaded. Inspection expires after a
+Artifact names are direct links that open in a new tab. SVG flamegraphs render
+in the browser with their search and zoom controls. Artifacts can also be
+previewed as text or downloaded. Inspection expires after a
 database write; Refresh results creates a new snapshot. Direct run/work-item
 panels show their current status and are labelled accordingly.
 

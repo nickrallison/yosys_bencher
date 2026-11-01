@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use yosys_bench_ui_types::{analysis::*, api::*, store::*};
 mod api;
+mod artifacts;
 mod chart;
 mod controls;
 mod filters;
@@ -13,7 +14,12 @@ use model::*;
 const THEME: &str = include_str!("../../ui/theme.css");
 fn main() {
     #[cfg(feature = "server")]
-    dioxus::serve(|| async move { Ok(dioxus::server::router(App)) });
+    dioxus::serve(|| async move {
+        Ok(dioxus::server::router(App).route(
+            "/artifacts/{id}",
+            dioxus::server::axum::routing::get(artifacts::serve),
+        ))
+    });
     #[cfg(not(feature = "server"))]
     dioxus::launch(App);
 }

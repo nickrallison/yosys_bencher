@@ -669,6 +669,25 @@ impl SqliteStore {
             })?
             .collect::<std::result::Result<_, _>>()?)
     }
+    pub fn artifact(&self, id: ArtifactId) -> Result<Artifact> {
+        self.connection
+            .query_row(
+                "SELECT attempt,name,path FROM artifacts WHERE id=?",
+                [id.0],
+                |r| {
+                    let path = PathBuf::from(r.get::<_, String>(2)?);
+                    Ok(Artifact {
+                        id,
+                        attempt: AttemptId(r.get(0)?),
+                        name: r.get(1)?,
+                        available: path.is_file(),
+                    })
+                },
+            )
+            .optional()?
+            .ok_or_else(|| StoreError::NotFound(format!("artifact {id}")))
+    }
+
     pub fn read_artifact(&self, id: ArtifactId) -> Result<Vec<u8>> {
         let path: String = self
             .connection
