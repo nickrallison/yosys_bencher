@@ -90,7 +90,7 @@ fn every_registered_metric_is_reachable_with_its_original_identity() {
             .iter()
             .map(|(name, _)| name.as_str())
             .collect::<Vec<_>>(),
-        ["reference", "baseline", "optimized"]
+        ["baseline", "optimized", "reference"]
     );
 
     let mut pending = vec![vec![]];
@@ -111,6 +111,42 @@ fn every_registered_metric_is_reachable_with_its_original_identity() {
         found.into_iter().collect::<BTreeSet<_>>(),
         metrics.iter().map(|m| m.path.clone()).collect()
     );
+}
+
+#[test]
+fn mcm_flows_share_synthesis_and_mcm_stats_groups() {
+    let metrics = McmOutput::analysis_metrics();
+    for flow in ["baseline", "optimized"] {
+        let synth = level(&metrics, &[flow.into(), "synth".into()]);
+        assert_eq!(
+            synth
+                .measurements
+                .iter()
+                .map(|m| m.name.as_str())
+                .collect::<Vec<_>>(),
+            ["area", "cell count"]
+        );
+        assert!(synth.groups.is_empty());
+    }
+    for flow in ["optimized", "reference"] {
+        let stats = level(&metrics, &[flow.into(), "mcm_stats".into()]);
+        for name in ["adds subs", "negations", "multipliers", "depth"] {
+            assert!(
+                stats.measurements.iter().any(|m| m.name == name),
+                "{flow}: {name}"
+            );
+        }
+        assert!(stats.groups.is_empty());
+    }
+    let baseline = level(&metrics, &["baseline".into()]);
+    assert!(
+        !baseline
+            .measurements
+            .iter()
+            .any(|m| m.name == "area" || m.name == "cell count")
+    );
+    let reference = level(&metrics, &["reference".into()]);
+    assert!(!reference.measurements.iter().any(|m| m.name == "adds subs"));
 }
 
 fn picker() -> Element {
@@ -217,31 +253,23 @@ fn pass_picker_selects_inclusive_parent_and_repeated_subpass_times() {
 fn navigation_preserves_selection_and_leaf_clicks_keep_full_metric_paths() {
     let mut picker = Picker::new();
     assert!(picker.html().contains("Derived measurements"));
-    assert!(!picker.html().contains("Open synthesis"));
+    assert!(!picker.html().contains("Open synth"));
     picker.click("Open optimized");
-    assert!(picker.html().contains("Open synthesis"));
+    assert!(picker.html().contains("Open synth"));
     assert!(!picker.html().contains("Mapped synthesis area"));
     assert!(picker.html().contains("optimized.runtime</output>"));
 
-    picker.click("Open synthesis");
+    picker.click("Open synth");
     assert!(picker.html().contains("Mapped synthesis area"));
     assert!(!picker.html().contains("Open perf"));
     picker.click("Mapped synthesis area");
-    assert!(
-        picker
-            .html()
-            .contains("optimized.measurements.synthesis.area</output>")
-    );
+    assert!(picker.html().contains("optimized.synth.area</output>"));
 
     picker.click("Back to optimized");
-    assert!(picker.html().contains("Open synthesis"));
+    assert!(picker.html().contains("Open synth"));
     picker.click("Back to all measurements");
     assert!(picker.html().contains("Derived measurements"));
-    assert!(
-        picker
-            .html()
-            .contains("optimized.measurements.synthesis.area</output>")
-    );
+    assert!(picker.html().contains("optimized.synth.area</output>"));
 
     picker.click("Show selected measurement: area");
     assert!(picker.html().contains("Mapped synthesis area"));
@@ -253,6 +281,22 @@ fn navigation_preserves_selection_and_leaf_clicks_keep_full_metric_paths() {
     assert!(picker.html().contains("Execution states only"));
     assert!(!picker.html().contains("area_savings</output>"));
     picker.click("Open baseline");
+    picker.click("Open synth");
+    picker.click("Mapped synthesis area");
+    assert!(picker.html().contains("baseline.synth.area</output>"));
+    picker.click("Back to baseline");
+    picker.click("Back to all measurements");
+    picker.click("Open reference");
+    picker.click("Open mcm stats");
+    picker.click("Add/subtract operations");
+    assert!(
+        picker
+            .html()
+            .contains("reference.mcm_stats.adds_subs</output>")
+    );
+    picker.click("Back to reference");
+    picker.click("Back to all measurements");
+    picker.click("Show execution coverage without requiring a metric.");
     picker.click("Show selected measurement: Execution states only");
     assert!(picker.html().contains("Derived measurements"));
 }

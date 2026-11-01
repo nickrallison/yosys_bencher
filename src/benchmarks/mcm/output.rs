@@ -27,18 +27,41 @@ pub struct OptimizedMeasurements {
 impl BenchmarkOut for OptimizedMeasurements {
     fn list_metrics() -> Vec<MetricDescriptor> {
         vec![
-            MetricDescriptor::group("optimization", McmMeasurements::list_metrics()),
-            MetricDescriptor::group("synthesis", SynthMeasurements::list_metrics()),
+            MetricDescriptor::group("synth", SynthMeasurements::list_metrics()),
+            MetricDescriptor::group("mcm_stats", McmMeasurements::list_metrics()),
         ]
     }
 
     fn get_metric(&self, name: &str) -> Option<MetricValue> {
         match name {
-            "optimization" => Some(self.optimization.metrics()),
-            "synthesis" => Some(self.synthesis.metrics()),
+            "mcm_stats" => Some(self.optimization.metrics()),
+            "synth" => Some(self.synthesis.metrics()),
             _ => None,
         }
     }
+}
+
+// Expose domain groups without changing the serialized output wrappers.
+fn measurement_groups<O: BenchmarkOut>(groups: Vec<MetricDescriptor>) -> Vec<MetricDescriptor> {
+    let mut descriptors = O::list_metrics();
+    let index = descriptors
+        .iter()
+        .position(|d| d.name() == "measurements")
+        .expect("measurement wrapper");
+    descriptors.splice(index..=index, groups);
+    descriptors
+}
+
+fn measurement_values(
+    output: &impl BenchmarkOut,
+    groups: impl IntoIterator<Item = (&'static str, MetricValue)>,
+) -> MetricValue {
+    let MetricValue::Group(mut values) = output.metrics() else {
+        unreachable!("output metrics are grouped")
+    };
+    values.remove("measurements");
+    values.extend(groups.into_iter().map(|(name, value)| (name.into(), value)));
+    MetricValue::Group(values)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,8 +98,8 @@ impl BenchmarkOut for McmOutput {
                 metric.direction = Direction::Higher;
                 metric.reference = Some(0.0);
                 metric.source = MetricSource::Formula {
-                    numerator: "optimized.measurements.synthesis.area".into(),
-                    denominator: "baseline.measurements.area".into(),
+                    numerator: "optimized.synth.area".into(),
+                    denominator: "baseline.synth.area".into(),
                     formula: FormulaKind::PercentSavings,
                     stage: FormulaStage::Input,
                 };
@@ -101,7 +124,7 @@ impl BenchmarkOut for McmOutput {
         ratio.reference = Some(1.0);
         ratio.source = MetricSource::Formula {
             numerator: "optimized.runtime".into(),
-            denominator: "reference.measurements.runtime".into(),
+            denominator: "reference.mcm_stats.runtime".into(),
             formula: FormulaKind::Ratio,
             stage: FormulaStage::Input,
         };
@@ -113,9 +136,24 @@ impl BenchmarkOut for McmOutput {
 
     fn list_metrics() -> Vec<MetricDescriptor> {
         vec![
-            MetricDescriptor::group("reference", PaperReference::list_metrics()),
-            MetricDescriptor::group("baseline", SynthOutput::list_metrics()),
-            MetricDescriptor::group("optimized", OptimizedOutput::list_metrics()),
+            MetricDescriptor::group(
+                "baseline",
+                measurement_groups::<SynthOutput>(vec![MetricDescriptor::group(
+                    "synth",
+                    SynthMeasurements::list_metrics(),
+                )]),
+            ),
+            MetricDescriptor::group(
+                "optimized",
+                measurement_groups::<OptimizedOutput>(OptimizedMeasurements::list_metrics()),
+            ),
+            MetricDescriptor::group(
+                "reference",
+                measurement_groups::<PaperReference>(vec![MetricDescriptor::group(
+                    "mcm_stats",
+                    PaperStats::list_metrics(),
+                )]),
+            ),
             MetricDescriptor::new(
                 "area_savings",
                 "Area saved against baseline",
@@ -128,11 +166,29 @@ impl BenchmarkOut for McmOutput {
 
     fn get_metric(&self, name: &str) -> Option<MetricValue> {
         match name {
-            "reference" => Some(self.reference.metrics()),
-            "baseline" => Some(self.baseline.metrics()),
-            "optimized" => Some(self.optimized.metrics()),
+            "reference" => Some(measurement_values(
+                &self.reference,
+                [("mcm_stats", self.reference.measurements.metrics())],
+            )),
+            "baseline" => Some(measurement_values(
+                &self.baseline,
+                [("synth", self.baseline.measurements().metrics())],
+            )),
+            "optimized" => Some(measurement_values(
+                &self.optimized,
+                [
+                    ("synth", self.optimized.measurements().synthesis.metrics()),
+                    (
+                        "mcm_stats",
+                        self.optimized.measurements().optimization.metrics(),
+                    ),
+                ],
+            )),
             "area_savings" => self.area_savings().map(MetricValue::Float),
             _ => None,
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
