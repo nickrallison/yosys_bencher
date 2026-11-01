@@ -2,10 +2,11 @@
 pub enum BuildError {
     #[error("no CMakeLists.txt in {0:?}")]
     MissingCMakeProject(std::path::PathBuf),
-    #[error("{stage} failed with {status}")]
+    #[error("{stage} failed ({status}); log: {log:?}")]
     Command {
         stage: &'static str,
         status: std::process::ExitStatus,
+        log: std::path::PathBuf,
     },
     #[error("could not run {stage}: {source}")]
     CommandIo {

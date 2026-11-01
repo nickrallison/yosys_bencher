@@ -44,6 +44,7 @@ pub struct RunOptions {
     pub perf: Option<PerfProfiler>,
     pub perf_counters: Option<PerfStat>,
     pub repetitions: NonZeroU32,
+    pub progress: crate::progress::Progress,
 }
 
 impl Default for RunOptions {
@@ -53,6 +54,7 @@ impl Default for RunOptions {
             perf: None,
             perf_counters: Some(PerfStat::default()),
             repetitions: NonZeroU32::new(1).unwrap(),
+            progress: crate::progress::Progress::default(),
         }
     }
 }
@@ -120,11 +122,26 @@ where
         provider: &mut impl ToolProvider<Tool = S::Tool>,
         options: &RunOptions,
     ) -> Result<ReportFor<S>, ExperimentError> {
+        let progress = &options.progress;
+        provider.set_progress(progress.clone());
+        progress.stage(format!("Initializing {}", self.suite.name()));
         check_label(self.suite.name())?;
         let session = self.suite.begin()?;
         let definition = self.suite.definition(&session)?;
+        progress.stage("Checking measurement tools");
         let settings = attempt::RunSettings::prepare(options);
+        progress.stage("Resolving revision history");
         let revisions = provider.revisions(&self.revs)?;
+        let revision_count = revisions.len();
+        let samples_per_revision =
+            (definition.inputs().len() as u64).saturating_mul(options.repetitions.get() as u64);
+        progress.start((revision_count as u64).saturating_mul(samples_per_revision));
+        progress.stage(format!(
+            "{} revisions, {} inputs, {} repetitions",
+            revision_count,
+            definition.inputs().len(),
+            options.repetitions
+        ));
         let directory = attempt::invocation_directory(self.suite.name(), &self.output_dir)?;
         let mut plan = crate::store::RunPlan::new(revisions.clone(), options.repetitions.get());
         plan.history = provider.history();
@@ -134,8 +151,17 @@ where
         let definition = definition.with_version(registered.definition.version);
         let mut attempts = Vec::new();
         let mut revision_failures = Vec::new();
+        let (mut succeeded, mut failed, mut unsupported) = (0_u64, 0_u64, 0_u64);
         let result = (|| -> Result<(), ExperimentError> {
             for (revision_index, revision) in revisions.into_iter().enumerate() {
+                let short_revision: String = revision.id().id().chars().take(10).collect();
+                progress.context(format!(
+                    "rev {}/{} {}",
+                    revision_index + 1,
+                    revision_count,
+                    short_revision
+                ));
+                progress.stage("Preparing tools");
                 let tools = match provider
                     .tool(&revision)
                     .and_then(|tool| self.suite.tools(&tool, &session))
@@ -147,6 +173,8 @@ where
                             revision.id().id(),
                             &error.to_string(),
                         )?;
+                        progress.println(format!("Skipping {short_revision}: {error}"));
+                        progress.advance(samples_per_revision);
                         revision_failures.push(RevisionFailure {
                             revision,
                             reason: error.to_string(),
@@ -154,10 +182,19 @@ where
                         continue;
                     }
                 };
+                progress.stage("Measuring inputs");
                 for (input_index, input) in definition.inputs().iter().enumerate() {
                     let work =
                         registered.work_items[revision.id().id()][&registered.inputs[input_index]];
                     for sample_index in 0..options.repetitions.get() {
+                        progress.context(format!(
+                            "{short_revision} input {}/{} repeat {}/{}",
+                            input_index + 1,
+                            definition.inputs().len(),
+                            sample_index + 1,
+                            options.repetitions
+                        ));
+                        progress.detail(input.label());
                         let id = store.start_attempt(work, sample_index)?;
                         let (record, artifacts) = attempt::run_attempt(
                             self.suite.procedure(),
@@ -182,6 +219,12 @@ where
                             )
                         });
                         store.finish_attempt::<S::Procedure>(id, &record, artifacts.as_deref())?;
+                        match &record.outcome {
+                            AttemptOutcome::Success(_) => succeeded += 1,
+                            AttemptOutcome::Failure(_) => failed += 1,
+                            AttemptOutcome::Unsupported(_) => unsupported += 1,
+                        }
+                        progress.advance(1);
                         attempts.push(Attempt {
                             revision: revision.clone(),
                             input_index,
@@ -200,8 +243,10 @@ where
             if let Err(interrupt) = store.interrupt_run(registered.run, &error.to_string()) {
                 log::warn!("Cannot mark interrupted run: {interrupt}");
             }
+            progress.fail("Run interrupted; completed results are saved");
             return Err(error);
         }
+        progress.finish(format!("Done: {succeeded} succeeded, {failed} failed, {unsupported} unsupported; {} build failures ({} skipped)",revision_failures.len(),revision_failures.len() as u64*samples_per_revision));
         Ok(RunReport {
             run_id: registered.run,
             experiment_id: registered.experiment,

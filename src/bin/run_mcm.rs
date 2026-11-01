@@ -1,10 +1,11 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, process::ExitCode};
 use yosys_bench::{
     benchmarks::{
         mcm::{CoefficientGenerator, CoefficientSets, McmSuite, PaperTool},
         synth::CellLibrary,
     },
     experiment::{AttemptOutcome, Experiment, RunOptions, YosysProvider},
+    progress::Progress,
     src_manager::{
         build::CcacheCMakeBuilder,
         git::{
@@ -12,9 +13,23 @@ use yosys_bench::{
             history::{CommitId, RevisionSelection},
         },
     },
+    store::SqliteStore,
 };
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> ExitCode {
+    let progress = Progress::new("MCM");
+    match run(&progress) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            progress.fail("Run failed");
+            eprintln!("Error: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run(progress: &Progress) -> Result<(), Box<dyn std::error::Error>> {
+    progress.stage("Loading benchmark configuration");
     let output_dir = PathBuf::from("output/mcm");
     let suite = McmSuite::new(
         CoefficientSets::Generated(CoefficientGenerator::default()),
@@ -25,8 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let builder = CcacheCMakeBuilder::new(output_dir.join("ccache"))
         .configure_arg("-DYOSYS_USE_BUNDLED_LIBS=ON")
-        .configure_arg("-DYOSYS_ENABLE_UNIT_TESTS=OFF")
-        .with_suppressed_stdout();
+        .configure_arg("-DYOSYS_ENABLE_UNIT_TESTS=OFF");
     let mut provider = YosysProvider {
         git: GitManager::new(output_dir.join("source"), "nick/mcm", None).with_remote("../yosys"),
         builder,
@@ -37,19 +51,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         suite,
         output_dir,
     );
-    let report = experiment.run(&mut provider, &RunOptions::default())?;
+    let report = experiment.run(
+        &mut provider,
+        &RunOptions {
+            progress: progress.clone(),
+            ..RunOptions::default()
+        },
+    )?;
     let json = serde_json::to_string_pretty(&report)?;
     let path = report.directory.join("results.json");
     fs::write(&path, &json)?;
     println!("Results: {}", path.display());
-    println!("{json}");
+    println!(
+        "Database: {} (experiment {}, run {})",
+        SqliteStore::default_path().display(),
+        report.experiment_id,
+        report.run_id
+    );
     if !report.revision_failures.is_empty()
         || report
             .attempts
             .iter()
             .any(|attempt| !matches!(attempt.record.outcome, AttemptOutcome::Success(_)))
     {
-        return Err("some MCM attempts failed or were unsupported; see results.json".into());
+        return Err(format!(
+            "Some measurements failed or were unsupported; see {}",
+            path.display()
+        )
+        .into());
     }
     Ok(())
 }

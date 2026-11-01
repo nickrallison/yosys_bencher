@@ -180,6 +180,7 @@ impl YosysRunner {
             context.record_diagnostic(&format!("{label}-netlist"), result);
         }
         if let Some(perf) = context.perf().clone() {
+            context.progress().detail(format!("Profiling {label}"));
             let result = (|| -> Result<()> {
                 check_label(label)?;
                 let directory = context.workspace().join("perf").join(label);

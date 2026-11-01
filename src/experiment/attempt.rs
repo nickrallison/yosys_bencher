@@ -12,6 +12,7 @@ pub(super) struct RunSettings {
     profiler: Option<PerfProfiler>,
     counters: PerfAvailability,
     retain: bool,
+    progress: crate::progress::Progress,
 }
 
 impl RunSettings {
@@ -21,6 +22,7 @@ impl RunSettings {
             profiler: options.perf.clone(),
             counters: PerfAvailability::prepare(options.perf_counters.as_ref()),
             retain: options.retains_artifacts(),
+            progress: options.progress.clone(),
         }
     }
 }
@@ -70,6 +72,7 @@ pub(super) fn run_attempt<P: Procedure>(
 ) -> Result<(AttemptRecord<P::Output>, Option<PathBuf>), ExperimentError> {
     let workspace = Workspace::new(directory, prefix, options.retain)?;
     let mut context = RunContext::new(workspace.path.clone(), options.artifacts)
+        .with_progress(options.progress.clone())
         .with_sample_index(sample_index)
         .with_perf_counters(options.counters.clone());
     if let Some(perf) = &options.profiler {

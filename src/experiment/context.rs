@@ -50,6 +50,7 @@ pub struct RunContext {
     processes: usize,
     sample_index: u32,
     diagnostics: Vec<String>,
+    progress: crate::progress::Progress,
 }
 
 impl RunContext {
@@ -63,7 +64,13 @@ impl RunContext {
             processes: 0,
             sample_index: 0,
             diagnostics: Vec::new(),
+            progress: crate::progress::Progress::default(),
         }
+    }
+
+    pub fn with_progress(mut self, progress: crate::progress::Progress) -> Self {
+        self.progress = progress;
+        self
     }
 
     pub fn with_perf(mut self, perf: PerfProfiler) -> Self {
@@ -102,6 +109,7 @@ impl RunContext {
         command: &mut Command,
     ) -> Result<ProcessOutput, ExperimentError> {
         check_label(label)?;
+        self.progress.detail(format!("Running {label}"));
         let perf = match &self.perf_counters {
             PerfAvailability::Available(perf) => Some(perf),
             _ => None,

@@ -15,6 +15,8 @@ use crate::{
 pub trait ToolProvider {
     type Tool;
 
+    fn set_progress(&mut self, _progress: crate::progress::Progress) {}
+
     fn repository(&self) -> String {
         "local".into()
     }
@@ -38,6 +40,10 @@ pub struct YosysProvider {
 impl ToolProvider for YosysProvider {
     type Tool = Yosys;
 
+    fn set_progress(&mut self, progress: crate::progress::Progress) {
+        self.builder.set_progress(progress);
+    }
+
     fn repository(&self) -> String {
         self.git.repository_identity()
     }
@@ -49,11 +55,14 @@ impl ToolProvider for YosysProvider {
     }
 
     fn revisions(&mut self, selection: &RevisionSelection) -> Result<Vec<Commit>, ExperimentError> {
+        self.builder.progress().stage("Preparing repository");
         self.git.initialize()?;
+        self.builder.progress().stage("Reading revision history");
         Ok(self.git.revisions(selection)?)
     }
 
     fn tool(&mut self, revision: &Commit) -> Result<Yosys, ExperimentError> {
+        self.builder.progress().stage("Checking out revision");
         self.git.set_revision(revision.id())?;
         let prefix = self.builder.build(
             self.git.directory(),

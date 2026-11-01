@@ -1,6 +1,7 @@
 use std::{
     ffi::OsString,
-    fs,
+    fs::{self, File},
+    io::Write,
     num::NonZeroUsize,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -43,7 +44,8 @@ pub struct CcacheCMakeBuilder {
     #[get]
     configure_args: Vec<OsString>,
     #[get]
-    suppress_stdout: bool,
+    #[get = "pub"]
+    progress: crate::progress::Progress,
 }
 
 impl CcacheCMakeBuilder {
@@ -58,7 +60,7 @@ impl CcacheCMakeBuilder {
             jobs: std::thread::available_parallelism().ok(),
             build_type: "RelWithDebInfo".into(),
             configure_args: Vec::new(),
-            suppress_stdout: false,
+            progress: crate::progress::Progress::default(),
         }
     }
 
@@ -77,9 +79,18 @@ impl CcacheCMakeBuilder {
         self
     }
 
-    pub fn with_suppressed_stdout(mut self) -> Self {
-        self.suppress_stdout = true;
+    /// Build stdout and stderr are always logged; retained for existing callers.
+    pub fn with_suppressed_stdout(self) -> Self {
         self
+    }
+
+    pub fn with_progress(mut self, progress: crate::progress::Progress) -> Self {
+        self.progress = progress;
+        self
+    }
+
+    pub fn set_progress(&mut self, progress: crate::progress::Progress) {
+        self.progress = progress;
     }
 
     pub fn set_max_cache_size(&self, size: &str) -> Result<(), BuildError> {
@@ -89,8 +100,8 @@ impl CcacheCMakeBuilder {
             Command::new("ccache")
                 .arg("--max-size")
                 .arg(size)
-                .env("CCACHE_DIR", &self.ccache_dir)
-                .stdout(Stdio::null()),
+                .env("CCACHE_DIR", &self.ccache_dir),
+            None,
         )
     }
 
@@ -101,8 +112,8 @@ impl CcacheCMakeBuilder {
             "ccache reset",
             Command::new("ccache")
                 .arg("--zero-stats")
-                .env("CCACHE_DIR", &self.ccache_dir)
-                .stdout(Stdio::null()),
+                .env("CCACHE_DIR", &self.ccache_dir),
+            None,
         )
     }
 
@@ -114,9 +125,13 @@ impl CcacheCMakeBuilder {
             .output()
             .map_err(|source| BuildError::CommandIo { stage, source })?;
         if !output.status.success() {
+            let (mut file, log) = self.command_log(stage)?;
+            file.write_all(&output.stdout)?;
+            file.write_all(&output.stderr)?;
             return Err(BuildError::Command {
                 stage,
                 status: output.status,
+                log,
             });
         }
         CcacheStats::parse(&output.stdout)
@@ -138,6 +153,10 @@ impl CcacheCMakeBuilder {
         let build_dir = build_dir.canonicalize()?;
         let install_dir = install_dir.canonicalize()?;
         let ccache_dir = self.ccache_dir.canonicalize()?;
+        let logs = tempfile::Builder::new()
+            .prefix("logs-")
+            .tempdir_in(&build_dir)?
+            .keep();
         let base_dir = source_dir
             .ancestors()
             .find(|ancestor| build_dir.starts_with(ancestor))
@@ -154,9 +173,8 @@ impl CcacheCMakeBuilder {
 
         self.run(
             "ccache check",
-            Command::new("ccache")
-                .arg("--version")
-                .stdout(Stdio::null()),
+            Command::new("ccache").arg("--version"),
+            None,
         )?;
 
         let mut prefix = OsString::from("-DCMAKE_INSTALL_PREFIX=");
@@ -177,6 +195,7 @@ impl CcacheCMakeBuilder {
                 .env("CCACHE_BASEDIR", base_dir)
                 .env("CFLAGS", compiler_flags("CFLAGS"))
                 .env("CXXFLAGS", compiler_flags("CXXFLAGS")),
+            Some(&logs.join("configure.log")),
         )?;
 
         let mut build = Command::new("cmake");
@@ -193,6 +212,7 @@ impl CcacheCMakeBuilder {
             build
                 .env("CCACHE_DIR", &ccache_dir)
                 .env("CCACHE_BASEDIR", base_dir),
+            Some(&logs.join("build.log")),
         )?;
         self.run(
             "install",
@@ -203,19 +223,46 @@ impl CcacheCMakeBuilder {
                 .arg(&self.build_type)
                 .env("CCACHE_DIR", &ccache_dir)
                 .env("CCACHE_BASEDIR", base_dir),
+            Some(&logs.join("install.log")),
         )?;
         Ok(install_dir)
     }
 
-    fn run(&self, stage: &'static str, command: &mut Command) -> Result<(), BuildError> {
-        if self.suppress_stdout {
-            command.stdout(Stdio::null());
+    fn command_log(&self, stage: &str) -> Result<(File, PathBuf), BuildError> {
+        fs::create_dir_all(&self.ccache_dir)?;
+        let file = tempfile::Builder::new()
+            .prefix(&format!("{}-", stage.replace(' ', "-")))
+            .suffix(".log")
+            .tempfile_in(&self.ccache_dir)?;
+        let (file, path) = file.keep().map_err(|error| error.error)?;
+        Ok((file, path.canonicalize()?))
+    }
+
+    fn run(
+        &self,
+        stage: &'static str,
+        command: &mut Command,
+        log: Option<&Path>,
+    ) -> Result<(), BuildError> {
+        match stage {
+            "configure" => self.progress.stage("Configuring Yosys"),
+            "build" => self.progress.stage("Building Yosys"),
+            "install" => self.progress.stage("Installing Yosys"),
+            _ => self.progress.detail(stage),
         }
+        let (file, log) = match log {
+            Some(path) => (File::create(path)?, path.to_path_buf()),
+            None => self.command_log(stage)?,
+        };
+        command
+            .stdin(Stdio::null())
+            .stdout(file.try_clone()?)
+            .stderr(file);
         let status = command
             .status()
             .map_err(|source| BuildError::CommandIo { stage, source })?;
         if !status.success() {
-            return Err(BuildError::Command { stage, status });
+            return Err(BuildError::Command { stage, status, log });
         }
         Ok(())
     }
@@ -252,5 +299,57 @@ impl CcacheStats {
             misses: misses
                 .ok_or_else(|| BuildError::InvalidCacheStats("missing cache_miss".into()))?,
         })
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_output_is_logged_and_failure_keeps_the_log() {
+        let temp = tempfile::tempdir().unwrap();
+        let builder = CcacheCMakeBuilder::new(temp.path());
+        let log = temp.path().join("build.log");
+        let error = builder
+            .run(
+                "build",
+                Command::new("sh").args([
+                    "-c",
+                    "printf 'compiler output\n'; printf 'compiler error\n' >&2; exit 7",
+                ]),
+                Some(&log),
+            )
+            .unwrap_err();
+        let BuildError::Command {
+            status,
+            log: recorded,
+            ..
+        } = error
+        else {
+            panic!("expected command failure")
+        };
+        assert_eq!(status.code(), Some(7));
+        assert_eq!(recorded, log);
+        let contents = fs::read_to_string(log).unwrap();
+        assert!(contents.contains("compiler output"));
+        assert!(contents.contains("compiler error"));
+    }
+
+    #[test]
+    fn successful_command_keeps_both_streams_without_terminal_output() {
+        let temp = tempfile::tempdir().unwrap();
+        let builder = CcacheCMakeBuilder::new(temp.path());
+        let log = temp.path().join("configure.log");
+        builder
+            .run(
+                "configure",
+                Command::new("sh").args(["-c", "printf 'configured\n'; printf 'warning\n' >&2"]),
+                Some(&log),
+            )
+            .unwrap();
+        let contents = fs::read_to_string(log).unwrap();
+        assert!(contents.contains("configured"));
+        assert!(contents.contains("warning"));
     }
 }
