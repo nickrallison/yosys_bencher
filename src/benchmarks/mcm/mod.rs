@@ -49,7 +49,70 @@ pub struct McmInput {
     pub paper_identity: PaperToolId,
 }
 
-impl BenchmarkIn for McmInput {}
+impl BenchmarkIn for McmInput {
+    fn fields() -> Vec<crate::experiment::InputField> {
+        use crate::experiment::{FieldKind as K, InputField as F};
+        let mut fields = vec![
+            F::new("input_width", "Input width", K::Number),
+            F::new("coefficient_count", "Coefficient count", K::Number),
+            F::new("coefficients", "Coefficients", K::Text),
+            F::new(
+                "max_coefficient",
+                "Largest coefficient magnitude",
+                K::Number,
+            ),
+            F::new("max_depth", "Maximum depth", K::Number),
+            F::new("search_budget", "Search budget", K::Number),
+            F::new("paper_seed", "Paper seed", K::Number),
+            F::new("paper_bit_width", "Paper bit width", K::Number),
+        ];
+        fields.extend(SynthConfig::fields().into_iter().map(|mut field| {
+            field.path = format!("synthesis.{}", field.path);
+            field
+        }));
+        fields.push(F::new("paper_tool", "Paper tool content hash", K::Text));
+        fields
+    }
+    fn parameters(&self) -> std::collections::BTreeMap<String, serde_json::Value> {
+        use serde_json::json;
+        let mut values: std::collections::BTreeMap<String, serde_json::Value> = [
+            ("input_width", json!(self.input_width)),
+            ("coefficient_count", json!(self.coefficients.len())),
+            ("coefficients", json!(format!("{:?}", self.coefficients))),
+            (
+                "max_coefficient",
+                json!(self.coefficients.iter().map(|c| c.unsigned_abs()).max()),
+            ),
+            ("max_depth", json!(self.options.max_depth)),
+            ("search_budget", json!(self.options.search_budget)),
+            ("paper_seed", json!(self.options.paper_seed)),
+            ("paper_bit_width", json!(self.options.paper_bit_width)),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.into(), v))
+        .collect();
+        values.extend(
+            self.synthesis
+                .parameters()
+                .into_iter()
+                .map(|(k, v)| (format!("synthesis.{k}"), v)),
+        );
+        values.insert(
+            "paper_tool".into(),
+            serde_json::to_value(&self.paper_identity).expect("executable identity is a string"),
+        );
+        values
+    }
+    fn label(&self) -> String {
+        format!("{}-bit {:?}", self.input_width, self.coefficients)
+    }
+}
+
+impl crate::store::StoredProcedure for McmProcedure {
+    const STORAGE_KEY: &'static str = "mcm";
+    const MEASUREMENT_CONTRACT: &'static str = "mcm.v2.wall-cpu-area";
+}
+inventory::submit! { crate::analysis::AdapterRegistration::for_procedure::<McmProcedure>() }
 
 impl McmInput {
     pub fn validate(&self) -> Result<()> {

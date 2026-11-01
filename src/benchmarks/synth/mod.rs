@@ -66,11 +66,46 @@ pub struct SynthMeasurements {
     cell_count: HashMap<String, u64>,
 }
 
-crate::benchmark_metrics! {
-    SynthMeasurements {
-        optional area(Float, "Mapped synthesis area", "area", false);
-        computed cell_count(UInt, "Total number of cells", "cells", false,
-            |this: &SynthMeasurements| this.cell_count.values().try_fold(0_u64, |sum, count| sum.checked_add(*count)));
+#[contracts::contract_trait]
+impl crate::experiment::BenchmarkOut for SynthMeasurements {
+    fn list_metrics() -> Vec<crate::metrics::MetricDescriptor> {
+        use crate::metrics::{MetricDescriptor, MetricType};
+        vec![
+            MetricDescriptor::new(
+                "area",
+                "Mapped synthesis area",
+                MetricType::Float,
+                "area",
+                false,
+            ),
+            MetricDescriptor::new(
+                "cell_count",
+                "Total number of cells",
+                MetricType::UInt,
+                "cells",
+                false,
+            ),
+        ]
+    }
+    fn get_metric(&self, name: &str) -> Option<crate::metrics::MetricValue> {
+        use crate::metrics::MetricValue;
+        match name {
+            "area" => self.area.map(MetricValue::Float),
+            "cell_count" => self
+                .cell_count
+                .values()
+                .try_fold(0_u64, |sum, count| sum.checked_add(*count))
+                .map(MetricValue::UInt),
+            _ => None,
+        }
+    }
+    fn analysis_metrics() -> Vec<crate::metrics::MetricSpec> {
+        let mut metrics = crate::metrics::describe(&Self::list_metrics());
+        for m in &mut metrics {
+            m.direction = crate::metrics::Direction::Lower;
+            m.domain = crate::metrics::Domain::Nonnegative;
+        }
+        metrics
     }
 }
 
@@ -79,12 +114,60 @@ pub type SynthInput = YosysBenchmarkInput<SynthConfig>;
 pub type TimingOutput = YosysBenchmarkOutput<()>;
 pub type SynthOutput = YosysBenchmarkOutput<SynthMeasurements>;
 
-impl BenchmarkIn for TimingConfig {}
-impl BenchmarkIn for SynthConfig {}
+impl BenchmarkIn for TimingConfig {
+    fn fields() -> Vec<crate::experiment::InputField> {
+        vec![crate::experiment::InputField::new(
+            "commands",
+            "Commands",
+            crate::experiment::FieldKind::Text,
+        )]
+    }
+    fn parameters(&self) -> std::collections::BTreeMap<String, serde_json::Value> {
+        [(
+            "commands".into(),
+            serde_json::json!(self.custom_commands.join("; ")),
+        )]
+        .into()
+    }
+}
+impl BenchmarkIn for SynthConfig {
+    fn fields() -> Vec<crate::experiment::InputField> {
+        vec![
+            crate::experiment::InputField::new(
+                "library",
+                "Cell library content hash",
+                crate::experiment::FieldKind::Text,
+            ),
+            crate::experiment::InputField::new(
+                "commands",
+                "Commands",
+                crate::experiment::FieldKind::Text,
+            ),
+        ]
+    }
+    fn parameters(&self) -> std::collections::BTreeMap<String, serde_json::Value> {
+        use sha2::{Digest, Sha256};
+        [
+            (
+                "library".into(),
+                serde_json::json!(format!(
+                    "{:x}",
+                    Sha256::digest(self.cell_lib.liberty.as_bytes())
+                )),
+            ),
+            (
+                "commands".into(),
+                serde_json::json!(self.custom_commands.join("; ")),
+            ),
+        ]
+        .into()
+    }
+}
 
 pub struct TimingProcedure;
 
 impl YosysProcedure for TimingProcedure {
+    const STORAGE_KEY: &'static str = "yosys.timing";
     type Config = TimingConfig;
     type Measurements = ();
 
@@ -159,6 +242,7 @@ impl SynthMeasurements {
 pub struct SynthProcedure;
 
 impl YosysProcedure for SynthProcedure {
+    const STORAGE_KEY: &'static str = "yosys.synth";
     type Config = SynthConfig;
     type Measurements = SynthMeasurements;
 
@@ -229,3 +313,6 @@ impl Suite for SynthSuite {
         Ok(tool.clone())
     }
 }
+
+inventory::submit! { crate::analysis::AdapterRegistration::for_procedure::<YosysBenchmark<TimingProcedure>>() }
+inventory::submit! { crate::analysis::AdapterRegistration::for_procedure::<YosysBenchmark<SynthProcedure>>() }

@@ -57,11 +57,11 @@ pub enum RevisionSelection {
 pub struct Commit {
     #[get = "pub"]
     id: CommitId,
-    #[get]
+    #[get = "pub"]
     committed_at: SystemTime,
-    #[get]
+    #[get = "pub"]
     author: String,
-    #[get]
+    #[get = "pub"]
     commit_message: String,
 }
 

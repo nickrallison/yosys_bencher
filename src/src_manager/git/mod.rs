@@ -40,6 +40,16 @@ impl GitManager {
         self
     }
 
+    pub fn repository_identity(&self) -> String {
+        self.remote
+            .as_ref()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.directory.to_string_lossy().into_owned())
+    }
+    pub fn history_identity(&self) -> &str {
+        &self.branch
+    }
+
     pub fn active_commit(&self) -> Option<&CommitId> {
         self.active_commit.as_ref()
     }

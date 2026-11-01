@@ -38,13 +38,32 @@ pub trait Procedure {
     ) -> Result<Self::Output, ExperimentError>;
 }
 
-pub trait BenchmarkIn: Clone + Eq + Hash + Serialize + DeserializeOwned {}
+pub trait BenchmarkIn: Clone + Eq + Hash + Serialize + DeserializeOwned {
+    fn fields() -> Vec<super::InputField> {
+        Vec::new()
+    }
+    fn parameters(&self) -> std::collections::BTreeMap<String, serde_json::Value> {
+        std::collections::BTreeMap::new()
+    }
+    fn label(&self) -> String {
+        "Input".into()
+    }
+}
 
 impl BenchmarkIn for () {}
 
 #[contract_trait]
 pub trait BenchmarkOut: Clone + Serialize + DeserializeOwned {
     fn list_metrics() -> Vec<MetricDescriptor>;
+
+    fn analysis_metrics() -> Vec<crate::metrics::MetricSpec> {
+        crate::metrics::describe(&Self::list_metrics())
+    }
+
+    /// Identity within a run for observations reused by multiple outputs.
+    fn observation_identity(&self, _path: &str) -> Option<String> {
+        None
+    }
 
     fn metrics(&self) -> MetricValue {
         MetricValue::Group(

@@ -7,7 +7,7 @@ use crate::{
     },
 };
 use contracts::contract_trait;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 use std::{hash::Hash, time::Duration};
 
 type Result<T> = std::result::Result<T, ExperimentError>;
@@ -25,6 +25,7 @@ pub fn measure<M>(
 }
 
 pub trait YosysProcedure {
+    const STORAGE_KEY: &'static str;
     type Config: BenchmarkIn;
     type Measurements: BenchmarkOut;
 
@@ -86,9 +87,35 @@ impl<C> YosysBenchmarkInput<C> {
     }
 }
 
-impl<C> BenchmarkIn for YosysBenchmarkInput<C> where
-    C: Clone + Eq + Hash + Serialize + DeserializeOwned
-{
+impl<C: BenchmarkIn> BenchmarkIn for YosysBenchmarkInput<C> {
+    fn fields() -> Vec<crate::experiment::InputField> {
+        let mut fields = vec![crate::experiment::InputField::new(
+            "design",
+            "Design",
+            crate::experiment::FieldKind::Text,
+        )];
+        fields.extend(C::fields());
+        fields
+    }
+    fn parameters(&self) -> std::collections::BTreeMap<String, serde_json::Value> {
+        let mut values = self.config.parameters();
+        values.insert("design".into(), serde_json::json!(self.label()));
+        values
+    }
+    fn label(&self) -> String {
+        self.design.top.clone().unwrap_or_else(|| {
+            self.design
+                .files
+                .iter()
+                .map(|f| f.path.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+    }
+}
+impl<P: YosysProcedure + 'static> crate::store::StoredProcedure for YosysBenchmark<P> {
+    const STORAGE_KEY: &'static str = P::STORAGE_KEY;
+    const MEASUREMENT_CONTRACT: &'static str = "yosys.v2.wall-and-statistics";
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Getters)]
@@ -129,6 +156,22 @@ impl<M> YosysBenchmarkOutput<M> {
 
 #[contract_trait]
 impl<M: BenchmarkOut> BenchmarkOut for YosysBenchmarkOutput<M> {
+    fn analysis_metrics() -> Vec<crate::metrics::MetricSpec> {
+        let mut metrics = crate::metrics::describe(&[Self::runtime_descriptor()]);
+        metrics[0].direction = crate::metrics::Direction::Lower;
+        metrics.extend(
+            M::analysis_metrics()
+                .into_iter()
+                .map(|m| m.prefixed("measurements")),
+        );
+        metrics.extend(
+            PerfMeasurements::analysis_metrics()
+                .into_iter()
+                .map(|m| m.prefixed("perf")),
+        );
+        metrics
+    }
+
     fn list_metrics() -> Vec<MetricDescriptor> {
         let mut metrics = vec![YosysBenchmarkOutput::<M>::runtime_descriptor()];
         metrics.push(MetricDescriptor::group("measurements", M::list_metrics()));

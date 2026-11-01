@@ -1,11 +1,12 @@
 # Storage and UI data design
 
-Status: proposed design, based on the storage and UI discussion. Rust snippets
-describe intended boundaries; they are not implemented APIs. Defaults identified
-as proposals still need validation during implementation.
+Status: the initial backend is implemented through the shared UI data boundary.
+See [backend usage](backend.md) for the concrete API, defaults, and scope. Rust
+snippets below describe the design boundaries; exact method signatures are in
+code. Detailed frontend work and explicitly deferred analyses remain future work.
 
-Selected approaches: `rusqlite` for database access and distributed adapter
-registration. The choice between `inventory` and `linkme` remains open.
+Selected approaches: `rusqlite` for database access and `inventory` for distributed
+adapter registration. Shared browser-safe values live in `crates/ui-types`.
 
 ## Purpose and scope
 
@@ -833,13 +834,15 @@ become necessary, treat them as derived data tied to payload and metric semantic
 7. Design metric relationships, suite comparison, saved views, and adaptive
    measurement separately.
 
-The defaults still requiring product decisions are source-version selection,
-environment grouping, latest-work-item ordering, multiple-run aggregation, and
-coverage. Their proposed behavior is documented above rather than hidden in SQL.
-Additional proposed defaults are the shared baseline run policy, adjacent
-selected revisions for changes, and requiring a choice for remaining scaling
-parameters. The statistical stopping rule and suite uncertainty model remain
-open.
+The initial implementation adopts compatible source versions, explicit selection
+when multiple environment/configuration partitions exist, latest invocation
+registration order, explicit multiple-run treatment, and strict input coverage.
+A usable estimate requires one valid repetition; failures remain visible. Baseline
+run selection defaults to the history policy. Changes use adjacent selected
+revisions, and Scaling requires a choice for remaining varying parameters.
+Inspection snapshots expire on any subsequent database write. See
+[backend usage](backend.md) for details. The statistical stopping rule and suite
+uncertainty model remain open.
 
 Useful acceptance cases include reordered inputs retaining identity; later minor
 versions projecting onto an earlier target; overlapping runs retaining complete
@@ -875,13 +878,12 @@ Analysis acceptance cases should also cover:
 - [Attempt and report types](../src/experiment/result.rs): typed outcomes and
   repetitions; `input_index` currently refers to local definition order.
 - [Execution](../src/experiment/mod.rs): currently collects a report in memory;
-  incremental Store writes and frozen persisted plans are future work.
+  incremental Store writes and frozen persisted plans are implemented.
 - [Metrics](../src/metrics.rs): nested descriptors and generic metric values.
 - [Reference cache](../src/experiment/reference/cache.rs): observations reused
   within a session.
-- [Store sketch](../src/store/mod.rs): explicitly temporary; replace it with the
-  persistent model rather than treating its current identifiers as a contract.
-- [Analysis module](../src/analysis/mod.rs): a placeholder for the analysis boundary.
+- [Store sketch](../src/store/mod.rs): the SQLite implementation and persistent read/write model.
+- [Analysis module](../src/analysis/mod.rs): generic analysis, registration, and the backend service boundary.
 
 V1 references are in the sibling `benchmarks` checkout:
 [analysis pipeline](../../benchmarks/src/analysis/pipeline.rs),

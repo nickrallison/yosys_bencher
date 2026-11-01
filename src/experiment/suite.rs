@@ -4,24 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error};
 
 use super::{BenchmarkIn, ExperimentError, Procedure, ProcedureId};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Getters)]
-#[getset(get = "pub")]
-pub struct Version {
-    major: u32,
-    minor: u32,
-}
-
-impl Version {
-    pub fn new(major: u32, minor: u32) -> Self {
-        Self { major, minor }
-    }
-}
-
-impl Default for Version {
-    fn default() -> Self {
-        Self::new(1, 0)
-    }
-}
+pub use yosys_bench_ui_types::Version;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CmpSuite {
@@ -92,6 +75,11 @@ impl<I: BenchmarkIn> SuiteDefinition<I> {
         }
     }
 
+    pub fn with_version(mut self, version: Version) -> Self {
+        self.procedure = ProcedureId::new(self.procedure.name().clone(), version);
+        self
+    }
+
     pub fn version(&self) -> &Version {
         self.procedure.version()
     }
@@ -106,8 +94,8 @@ impl<I: BenchmarkIn> SuiteDefinition<I> {
         let version = *previous.version();
         match self.compare(previous) {
             CmpSuite::Eq => version,
-            CmpSuite::Superset => Version::new(version.major, version.minor + 1),
-            CmpSuite::Incompatible => Version::new(version.major + 1, 0),
+            CmpSuite::Superset => Version::new(*version.major(), version.minor() + 1),
+            CmpSuite::Incompatible => Version::new(version.major() + 1, 0),
         }
     }
 }

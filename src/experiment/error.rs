@@ -24,6 +24,8 @@ pub enum ExperimentError {
     #[error("profiling error: {0}")]
     Profiling(String),
     #[error(transparent)]
+    Store(#[from] crate::store::StoreError),
+    #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Git(#[from] crate::src_manager::git::GitError),

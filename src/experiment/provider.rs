@@ -15,6 +15,16 @@ use crate::{
 pub trait ToolProvider {
     type Tool;
 
+    fn repository(&self) -> String {
+        "local".into()
+    }
+    fn history(&self) -> String {
+        "first-parent".into()
+    }
+    fn measurement_options(&self) -> serde_json::Value {
+        serde_json::json!({})
+    }
+
     fn revisions(&mut self, selection: &RevisionSelection) -> Result<Vec<Commit>, ExperimentError>;
     fn tool(&mut self, revision: &Commit) -> Result<Self::Tool, ExperimentError>;
 }
@@ -27,6 +37,16 @@ pub struct YosysProvider {
 
 impl ToolProvider for YosysProvider {
     type Tool = Yosys;
+
+    fn repository(&self) -> String {
+        self.git.repository_identity()
+    }
+    fn history(&self) -> String {
+        self.git.history_identity().into()
+    }
+    fn measurement_options(&self) -> serde_json::Value {
+        self.builder.measurement_options()
+    }
 
     fn revisions(&mut self, selection: &RevisionSelection) -> Result<Vec<Commit>, ExperimentError> {
         self.git.initialize()?;

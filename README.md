@@ -1,3 +1,17 @@
+# Backend
+
+Storage, typed adapter registration, and the five initial analysis modes are
+implemented. See [backend usage](docs/backend.md) for running benchmarks, querying
+results, and connecting the shared types to a UI.
+
+```sh
+cargo run --bin results -- list
+cargo run --bin results -- analyze plan.json
+```
+
+The database defaults to `output/results.sqlite`; set `YOSYS_BENCH_DATABASE` to
+choose another path. The frontend remains to be implemented.
+
 # Plan
 
 See the [storage and UI data design](docs/storage-design.md) for the proposed

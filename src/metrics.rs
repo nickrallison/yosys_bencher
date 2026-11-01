@@ -1,3 +1,5 @@
+mod analysis;
+pub use analysis::*;
 use std::{collections::BTreeMap, time::Duration};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -20,14 +22,6 @@ impl MetricValue {
             Self::Group(_) | Self::Samples(_) => None,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum MetricType {
-    Int,
-    UInt,
-    Float,
-    Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

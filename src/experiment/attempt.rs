@@ -77,7 +77,11 @@ pub(super) fn run_attempt<P: Procedure>(
     }
     let started_at = SystemTime::now();
     let start = Instant::now();
-    let outcome = procedure.run(input, tools, &mut context).into();
+    let outcome = match procedure.run(input, tools, &mut context) {
+        Ok(value) => super::AttemptOutcome::Success(value),
+        Err(ExperimentError::Unsupported(reason)) => super::AttemptOutcome::Unsupported(reason),
+        Err(error) => super::AttemptOutcome::Failure(error.to_string()),
+    };
     let record = AttemptRecord {
         started_at,
         duration: start.elapsed(),

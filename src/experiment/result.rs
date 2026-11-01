@@ -1,37 +1,11 @@
-use std::{
-    path::PathBuf,
-    time::{Duration, SystemTime},
-};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use super::{ExperimentError, SuiteDefinition};
+use super::SuiteDefinition;
 use crate::src_manager::git::history::Commit;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AttemptOutcome<O> {
-    Success(O),
-    Failure(String),
-    Unsupported(String),
-}
-
-impl<O> From<Result<O, ExperimentError>> for AttemptOutcome<O> {
-    fn from(result: Result<O, ExperimentError>) -> Self {
-        match result {
-            Ok(output) => Self::Success(output),
-            Err(ExperimentError::Unsupported(reason)) => Self::Unsupported(reason),
-            Err(error) => Self::Failure(error.to_string()),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AttemptRecord<O> {
-    pub started_at: SystemTime,
-    pub duration: Duration,
-    pub outcome: AttemptOutcome<O>,
-    pub diagnostics: Vec<String>,
-}
+pub use yosys_bench_ui_types::experiment::{AttemptOutcome, AttemptRecord};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Attempt<O> {
@@ -51,6 +25,8 @@ pub struct RevisionFailure {
 
 #[derive(Debug, Serialize)]
 pub struct RunReport<I, O> {
+    pub run_id: crate::store::RunId,
+    pub experiment_id: crate::store::ExperimentId,
     pub suite: String,
     pub definition: SuiteDefinition<I>,
     pub directory: PathBuf,

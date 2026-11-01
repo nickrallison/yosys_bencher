@@ -13,3 +13,11 @@ thiserror = "2.0.21"
 sha2 = "0.10.9"
 rand = { version = "0.9", default-features = false, features = ["small_rng"] }
 log = "0.4"
+
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+inventory = "0.3.25"
+
+yosys-bench-ui-types = { path = "crates/ui-types" }
+
+[workspace]
+members = ["crates/ui-types"]

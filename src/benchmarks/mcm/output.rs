@@ -58,6 +58,59 @@ impl McmOutput {
 
 #[contract_trait]
 impl BenchmarkOut for McmOutput {
+    fn observation_identity(&self, path: &str) -> Option<String> {
+        path.strip_prefix("reference.")
+            .map(|p| format!("reference:{}:{p}", self.reference.id))
+    }
+
+    fn analysis_metrics() -> Vec<crate::metrics::MetricSpec> {
+        use crate::metrics::*;
+        let mut metrics = crate::metrics::describe(&Self::list_metrics());
+        for metric in &mut metrics {
+            metric.direction = Direction::Lower;
+            if metric.path != "area_savings" {
+                metric.domain = Domain::Nonnegative;
+            }
+            if metric.path == "area_savings" {
+                metric.direction = Direction::Higher;
+                metric.reference = Some(0.0);
+                metric.source = MetricSource::Formula {
+                    numerator: "optimized.measurements.synthesis.area".into(),
+                    denominator: "baseline.measurements.area".into(),
+                    formula: FormulaKind::PercentSavings,
+                    stage: FormulaStage::Input,
+                };
+                metric.inputs.retain(|r| *r != Reduction::Sum);
+            }
+            if metric.path.contains(".perf.") {
+                metric.direction = Direction::Unspecified;
+            }
+        }
+        let mut ratio = metrics
+            .iter()
+            .find(|m| m.path == "optimized.runtime")
+            .unwrap()
+            .clone();
+        ratio.path = "optimized_to_reference_runtime".into();
+        ratio.label = "Optimized flow / paper runtime".into();
+        ratio.description =
+            "Complete optimized Yosys flow wall time divided by standalone paper process wall time"
+                .into();
+        ratio.kind = MetricType::Float;
+        ratio.unit = "ratio".into();
+        ratio.reference = Some(1.0);
+        ratio.source = MetricSource::Formula {
+            numerator: "optimized.runtime".into(),
+            denominator: "reference.measurements.runtime".into(),
+            formula: FormulaKind::Ratio,
+            stage: FormulaStage::Input,
+        };
+        ratio.inputs.retain(|r| *r != Reduction::Sum);
+        ratio.inputs.push(Reduction::GeometricMean);
+        metrics.push(ratio);
+        metrics
+    }
+
     fn list_metrics() -> Vec<MetricDescriptor> {
         vec![
             MetricDescriptor::group("reference", PaperReference::list_metrics()),

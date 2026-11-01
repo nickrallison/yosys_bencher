@@ -47,6 +47,11 @@ pub struct CcacheCMakeBuilder {
 }
 
 impl CcacheCMakeBuilder {
+    pub fn measurement_options(&self) -> serde_json::Value {
+        serde_json::json!({ "build_type": self.build_type,
+            "configure_args": self.configure_args.iter().map(|v| v.to_string_lossy()).collect::<Vec<_>>() })
+    }
+
     pub fn new(ccache_dir: impl Into<PathBuf>) -> Self {
         Self {
             ccache_dir: ccache_dir.into(),
