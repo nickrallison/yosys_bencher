@@ -39,6 +39,7 @@ terminal escape sequences. Use `cargo run --quiet` to silence Cargo's own output
 MCM prunes each revision's build and install directories after its measurements
 and profiling finish, including failed revisions. The source checkout, ccache,
 and benchmark artifacts are retained. Cleanup errors interrupt the run.
+MCM and `build_yosys` share the compiler cache at `output/ccache`.
 
 Build stdout and stderr are saved in a unique `logs-*/` directory
 (`configure.log`, `build.log`, and `install.log`). MCM keeps these under
@@ -98,17 +99,45 @@ and call count. This applies to timing, synthesis, and both MCM flows. The exist
 `runtime` remains elapsed wall time. Diagnostic profiling/netlist executions are
 separate from these measurements.
 
+`YosysProvider` also instruments `Pass::pre_execute` and `post_execute` while
+building each revision, then restores `kernel/register.cc`, including on build
+failure. The hooks use Yosys's CPU clock and retain individual invocations in
+execution order. They are active only when `YOSYS_BENCH_CALL_TRACE` is set by the
+measurement runner. The trace is buffered in memory and written at process exit
+to `.yosys-logs/calls.json`. The tracing version is part of the run's measurement
+options, separating instrumented measurements from earlier configurations.
+Unsupported timer implementations fail explicitly rather than inventing nesting.
+
+`timings.calls` stores an ordered tree of calls, with inclusive `runtime`,
+`self_runtime` excluding direct children, and ordered `children`. For example:
+
+- `timings.calls.synth.runtime`: the whole synth invocation, including subpasses.
+- `timings.calls.synth.self_runtime`: synth's own CPU time.
+- `timings.calls.synth.children.opt.runtime`: the first opt invocation in synth.
+- `timings.calls.synth.children.opt~2.runtime`: the second opt invocation there.
+
+Names and sibling occurrence numbers identify calls within their parent; inserting
+an unrelated pass does not rename existing paths. Repeated calls stay separate.
+The runner's `tee` wrappers are removed from navigation. These hooks add timing
+and bookkeeping overhead; diagnostic runs disable collection. An external
+uninstrumented `Yosys::new` executable still supplies the flat report only.
+
 The raw report is retained at `attempt-*/logs/<label>/timing.json` when logs are
 enabled. Analysis discovers recorded pass names from successful stored outputs,
 including plugin passes. Metric paths include `timings.total`,
 `timings.passes.opt.runtime`, and `timings.passes.opt.calls`; MCM prefixes these
 with `baseline.` or `optimized.`. Runtimes are exposed in seconds. Names containing
 `.` or `%` use `%2E` or `%25` in metric path segments; raw output keys stay intact.
+Call-tree names additionally escape `~` as `%7E`. The raw call trace is retained
+beside `timing.json` when logs are enabled. Discovery and the metric picker
+preserve first-observed call order.
 
 Older payloads remain readable with no timings. A missing pass or historical
 measurement produces a missing value, never an invented zero. Existing artifacts
 are not backfilled into old payloads. New jobs require a valid timing report;
 a missing or malformed report fails that attempt and the runner continues.
+Old flat reports remain available under `timings.passes`; they cannot recover
+per-invocation timings. Provider-built jobs require a valid call trace as well.
 
 ## Selection and estimates
 

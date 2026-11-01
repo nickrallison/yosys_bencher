@@ -40,7 +40,7 @@ fn run(progress: &Progress) -> Result<(), Box<dyn std::error::Error>> {
             executable: assets.join("acm/acm"),
         },
     );
-    let builder = CcacheCMakeBuilder::new(output_dir.join("ccache"))
+    let builder = CcacheCMakeBuilder::new(root.join("output/ccache"))
         .configure_arg("-DYOSYS_USE_BUNDLED_LIBS=ON")
         .configure_arg("-DYOSYS_ENABLE_UNIT_TESTS=OFF");
     let mut provider = YosysProvider {

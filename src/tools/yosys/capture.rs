@@ -36,7 +36,10 @@ impl YosysRun {
             .files
             .get(Path::new("timing.json"))
             .ok_or_else(|| ExperimentError::Parse("missing Yosys pass timings".into()))?;
-        let timings = YosysTimings::parse(bytes)?;
+        let mut timings = YosysTimings::parse(bytes)?;
+        if let Some(trace) = captured.files.get(Path::new("calls.json")) {
+            timings = timings.with_call_trace(trace)?;
+        }
         Ok(Self {
             process: captured.process,
             stage_logs,

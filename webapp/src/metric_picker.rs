@@ -1,6 +1,5 @@
 use crate::model::label;
 use dioxus::prelude::*;
-use std::collections::BTreeMap;
 use yosys_bench_ui_types::metrics::{MetricSource, MetricSpec};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -28,12 +27,33 @@ impl From<&MetricSpec> for Measurement {
 
 // The payload's `measurements` wrapper adds no useful navigation level.
 fn hierarchy(metric: &MetricSpec) -> Vec<String> {
-    metric
-        .path
-        .split('.')
-        .filter(|s| *s != "measurements")
-        .map(str::to_owned)
+    let parts = metric.path.split('.').collect::<Vec<_>>();
+    let calls = parts
+        .windows(2)
+        .position(|pair| pair == ["timings", "calls"])
+        .map(|index| index + 2);
+    parts
+        .into_iter()
+        .enumerate()
+        .filter(|(index, name)| {
+            if let Some(start) = calls.filter(|start| index >= start) {
+                !((index - start) % 2 == 1 && *name == "children")
+            } else {
+                *name != "measurements"
+            }
+        })
+        .map(|(_, name)| name.to_owned())
         .collect()
+}
+fn group_label(name: &str) -> String {
+    let (name, occurrence) = name
+        .rsplit_once('~')
+        .map_or((name, None), |(name, n)| (name, Some(n)));
+    let name = label(name)
+        .replace("%2E", ".")
+        .replace("%7E", "~")
+        .replace("%25", "%");
+    occurrence.map_or_else(|| name.clone(), |n| format!("{name} ({n})"))
 }
 fn parent(metric: &MetricSpec) -> Vec<String> {
     if matches!(metric.source, MetricSource::Formula { .. }) {
@@ -48,7 +68,7 @@ fn parent(metric: &MetricSpec) -> Vec<String> {
 struct Level {
     derived: Vec<Measurement>,
     measurements: Vec<Measurement>,
-    groups: BTreeMap<String, Vec<String>>,
+    groups: Vec<(String, Vec<String>)>,
 }
 fn level(metrics: &[MetricSpec], location: &[String]) -> Level {
     let mut level = Level::default();
@@ -64,11 +84,11 @@ fn level(metrics: &[MetricSpec], location: &[String]) -> Level {
             match rest {
                 [] | [_] => level.measurements.push(metric.into()),
                 [name, ..] => {
-                    level.groups.entry(name.clone()).or_insert_with(|| {
+                    if !level.groups.iter().any(|(key, _)| key == name) {
                         let mut next = location.to_vec();
                         next.push(name.clone());
-                        next
-                    });
+                        level.groups.push((name.clone(), next));
+                    }
                 }
             }
         }
@@ -99,7 +119,7 @@ pub fn MetricPicker(
         .map(|m| {
             parent(m)
                 .iter()
-                .map(|s| label(s))
+                .map(|s| group_label(s))
                 .collect::<Vec<_>>()
                 .join(" / ")
         })
@@ -112,7 +132,7 @@ pub fn MetricPicker(
     } else {
         current
             .iter()
-            .map(|s| label(s))
+            .map(|s| group_label(s))
             .collect::<Vec<_>>()
             .join(" / ")
     };
@@ -121,7 +141,7 @@ pub fn MetricPicker(
         .map(|(_, parent)| {
             parent
                 .last()
-                .map(|s| label(s))
+                .map(|s| group_label(s))
                 .unwrap_or_else(|| "all measurements".into())
         })
         .unwrap_or_else(|| "all measurements".into());
@@ -223,9 +243,9 @@ fn MetricLevel(
                         key: "group-{name}",
                         r#type: "button",
                         class: "metric-entry metric-folder",
-                        aria_label: "Open {label(&name)}",
+                        aria_label: "Open {group_label(&name)}",
                         onclick: move |_| on_enter.call(path.clone()),
-                        span { "{label(&name)}" }
+                        span { "{group_label(&name)}" }
                         span { class: "metric-chevron", aria_hidden: "true" }
                     }
                 }

@@ -1,7 +1,84 @@
 use super::*;
 use dioxus::dioxus_core::{AttributeValue, ElementId, Mutation, Mutations};
-use std::{any::Any, collections::BTreeSet, rc::Rc};
+use std::{
+    any::Any,
+    collections::{BTreeMap, BTreeSet},
+    rc::Rc,
+};
 use yosys_bench::{benchmarks::mcm::McmOutput, experiment::BenchmarkOut};
+
+fn trace_metrics() -> Vec<MetricSpec> {
+    use yosys_bench::{benchmarks::yosys::YosysBenchmarkOutput, tools::yosys::YosysTimings};
+    let timings = YosysTimings::parse(br#"{"generator":"test","total_ns":0,"passes":{}}"#)
+        .unwrap()
+        .with_call_trace(include_bytes!("../../../tests/fixtures/yosys-calls.json"))
+        .unwrap();
+    let output = YosysBenchmarkOutput::new(std::time::Duration::ZERO, ()).with_timings(timings);
+    yosys_bench::metrics::catalog([&output])
+        .into_iter()
+        .map(|m| m.prefixed("baseline"))
+        .collect()
+}
+
+#[test]
+fn pass_navigation_preserves_call_order_and_exposes_parent_and_child_times() {
+    let metrics = trace_metrics();
+    let path = ["baseline", "timings", "calls", "synth"].map(str::to_owned);
+    let synth = level(&metrics, &path);
+    assert_eq!(
+        synth
+            .measurements
+            .iter()
+            .map(|m| m.name.as_str())
+            .collect::<Vec<_>>(),
+        ["runtime", "self runtime"]
+    );
+    assert_eq!(
+        synth
+            .groups
+            .iter()
+            .map(|(name, _)| group_label(name))
+            .collect::<Vec<_>>(),
+        ["proc", "opt", "opt (2)"]
+    );
+    let second_opt = &synth.groups[2].1;
+    let opt = level(&metrics, second_opt);
+    assert_eq!(
+        opt.measurements[0].path,
+        "baseline.timings.calls.synth.children.opt~2.runtime"
+    );
+    assert_eq!(
+        parent(
+            metrics
+                .iter()
+                .find(|m| m.path == opt.measurements[0].path)
+                .unwrap()
+        ),
+        *second_opt
+    );
+    let roots = level(&metrics, &path[..3]);
+    assert_eq!(
+        roots
+            .groups
+            .iter()
+            .map(|(name, _)| group_label(name))
+            .collect::<Vec<_>>(),
+        ["synth", "abc", "plugin.pass%~"]
+    );
+    let mut named_children = metrics[0].clone();
+    named_children.path = "baseline.timings.calls.children.children.measurements.runtime".into();
+    assert_eq!(
+        hierarchy(&named_children),
+        [
+            "baseline",
+            "timings",
+            "calls",
+            "children",
+            "measurements",
+            "runtime"
+        ]
+    );
+}
 
 #[test]
 fn every_registered_metric_is_reachable_with_its_original_identity() {
@@ -9,8 +86,11 @@ fn every_registered_metric_is_reachable_with_its_original_identity() {
     let root = level(&metrics, &[]);
     assert_eq!(root.derived.len(), 2);
     assert_eq!(
-        root.groups.keys().map(String::as_str).collect::<Vec<_>>(),
-        ["baseline", "optimized", "reference"]
+        root.groups
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        ["reference", "baseline", "optimized"]
     );
 
     let mut pending = vec![vec![]];
@@ -24,7 +104,7 @@ fn every_registered_metric_is_reachable_with_its_original_identity() {
             );
             found.push(metric.path);
         }
-        pending.extend(entries.groups.into_values());
+        pending.extend(entries.groups.into_iter().map(|(_, path)| path));
     }
     assert_eq!(found.len(), metrics.len());
     assert_eq!(
@@ -46,6 +126,19 @@ fn picker() -> Element {
     }
 }
 
+fn call_picker() -> Element {
+    let mut value = use_signal(|| None::<String>);
+    rsx! {
+        MetricPicker {
+            metrics: trace_metrics(),
+            value: value(),
+            allow_none: false,
+            on_change: move |path: String| value.set(Some(path)),
+        }
+        output { id: "selection", "{value().unwrap_or_default()}" }
+    }
+}
+
 // Exercise Dioxus event handlers and rerenders without a browser or benchmark tools.
 struct Picker {
     dom: VirtualDom,
@@ -53,9 +146,12 @@ struct Picker {
 }
 impl Picker {
     fn new() -> Self {
+        Self::component(picker)
+    }
+    fn component(component: fn() -> Element) -> Self {
         set_event_converter(Box::new(dioxus::html::SerializedHtmlEventConverter));
         let mut picker = Self {
-            dom: VirtualDom::new(picker),
+            dom: VirtualDom::new(component),
             buttons: BTreeMap::new(),
         };
         let edits = picker.dom.rebuild_to_vec();
@@ -91,6 +187,30 @@ impl Picker {
     fn html(&self) -> String {
         dioxus::ssr::render(&self.dom)
     }
+}
+
+#[test]
+fn pass_picker_selects_inclusive_parent_and_repeated_subpass_times() {
+    let mut picker = Picker::component(call_picker);
+    for group in ["baseline", "timings", "calls", "synth"] {
+        picker.click(&format!("Open {group}"));
+    }
+    picker.click("Inclusive CPU time for this pass invocation and its subpasses");
+    assert!(
+        picker
+            .html()
+            .contains("baseline.timings.calls.synth.runtime</output>")
+    );
+    picker.click("Open opt (2)");
+    picker.click("Self CPU time for this pass invocation, excluding subpasses");
+    assert!(
+        picker
+            .html()
+            .contains("baseline.timings.calls.synth.children.opt~2.self_runtime</output>")
+    );
+    picker.click("Back to synth");
+    picker.click("Show selected measurement: self runtime");
+    assert!(picker.html().contains("opt (2)"));
 }
 
 #[test]

@@ -56,7 +56,9 @@ impl ToolProvider for YosysProvider {
         self.git.history_identity().into()
     }
     fn measurement_options(&self) -> serde_json::Value {
-        self.builder.measurement_options()
+        let mut options = self.builder.measurement_options();
+        options["yosys_call_trace"] = crate::tools::yosys::instrumentation::VERSION.into();
+        options
     }
 
     fn revisions(&mut self, selection: &RevisionSelection) -> Result<Vec<Commit>, ExperimentError> {
@@ -69,12 +71,14 @@ impl ToolProvider for YosysProvider {
     fn tool(&mut self, revision: &Commit) -> Result<Yosys, ExperimentError> {
         self.builder.progress().stage("Checking out revision");
         self.git.set_revision(revision.id())?;
-        let prefix = self.builder.build_with_logs(
-            self.git.directory(),
-            &self.output_dir.join("build").join(revision.id().id()),
-            &self.output_dir.join("install").join(revision.id().id()),
-            &self.output_dir.join("logs").join(revision.id().id()),
-        )?;
+        let prefix = crate::tools::yosys::instrumentation::build(self.git.directory(), || {
+            Ok(self.builder.build_with_logs(
+                self.git.directory(),
+                &self.output_dir.join("build").join(revision.id().id()),
+                &self.output_dir.join("install").join(revision.id().id()),
+                &self.output_dir.join("logs").join(revision.id().id()),
+            )?)
+        })?;
         let executable = prefix.join("bin/yosys");
         if !executable.is_file() {
             return Err(ExperimentError::Config(format!(
@@ -82,7 +86,7 @@ impl ToolProvider for YosysProvider {
                 executable.display()
             )));
         }
-        Ok(Yosys::new(executable))
+        Ok(Yosys::new(executable).with_call_trace())
     }
 
     fn finish_revision(&mut self, revision: &Commit) -> Result<(), ExperimentError> {

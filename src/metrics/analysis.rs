@@ -44,7 +44,7 @@ pub fn describe(descriptors: &[MetricDescriptor]) -> Vec<MetricSpec> {
                 // A nested collection is not a repetition axis. Authors must expose an explicit scalar projection.
                 MetricDescriptor::Samples { .. } => (),
                 // Named keys are added by describe_dynamic from recorded values.
-                MetricDescriptor::Map { .. } => (),
+                MetricDescriptor::Map { .. } | MetricDescriptor::Tree { .. } => (),
             }
         }
     }
@@ -58,6 +58,7 @@ pub fn scalar(output: &impl crate::experiment::BenchmarkOut, path: &str) -> Opti
     for part in parts {
         value = match value {
             MetricValue::Group(mut group) => group.remove(part)?,
+            MetricValue::OrderedGroup(group) => group.into_iter().find(|(name, _)| name == part)?.1,
             _ => return None,
         };
     }
@@ -111,7 +112,29 @@ pub fn describe_dynamic(descriptors: &[MetricDescriptor], value: &MetricValue) -
                         }
                     }
                 }
+                MetricDescriptor::Tree { children, .. } => {
+                    visit_tree(out, &path, children, value);
+                }
                 _ => (),
+            }
+        }
+    }
+    fn visit_tree(
+        out: &mut Vec<MetricSpec>,
+        prefix: &str,
+        descriptors: &[MetricDescriptor],
+        value: &MetricValue,
+    ) {
+        let MetricValue::OrderedGroup(nodes) = value else {
+            return;
+        };
+        for (name, node) in nodes {
+            let path = format!("{prefix}.{name}");
+            visit(out, &path, descriptors, node, true);
+            if let MetricValue::Group(fields) = node
+                && let Some(children) = fields.get("children")
+            {
+                visit_tree(out, &format!("{path}.children"), descriptors, children);
             }
         }
     }
@@ -125,14 +148,12 @@ pub fn catalog<'a, O: crate::experiment::BenchmarkOut + 'a>(
 ) -> Vec<MetricSpec> {
     let mut metrics = O::analysis_metrics();
     let mut known: std::collections::BTreeSet<_> = metrics.iter().map(|m| m.path.clone()).collect();
-    let mut observed = std::collections::BTreeMap::new();
     for output in outputs {
         for metric in describe_dynamic(&O::list_metrics(), &output.metrics()) {
             if known.insert(metric.path.clone()) {
-                observed.insert(metric.path.clone(), metric);
+                metrics.push(metric);
             }
         }
     }
-    metrics.extend(observed.into_values());
     metrics
 }

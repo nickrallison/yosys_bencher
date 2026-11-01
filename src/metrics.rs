@@ -9,6 +9,7 @@ pub enum MetricValue {
     Float(f64),
     Duration(Duration),
     Group(BTreeMap<String, MetricValue>),
+    OrderedGroup(Vec<(String, MetricValue)>),
     Samples(Vec<MetricValue>),
 }
 
@@ -19,7 +20,7 @@ impl MetricValue {
             Self::UInt(_) => Some(MetricType::UInt),
             Self::Float(_) => Some(MetricType::Float),
             Self::Duration(_) => Some(MetricType::Duration),
-            Self::Group(_) | Self::Samples(_) => None,
+            Self::Group(_) | Self::OrderedGroup(_) | Self::Samples(_) => None,
         }
     }
 }
@@ -42,6 +43,11 @@ pub enum MetricDescriptor {
         name: &'static str,
         children: Vec<MetricDescriptor>,
     },
+    /// Ordered named nodes with scalar fields and an optional `children` tree.
+    Tree {
+        name: &'static str,
+        children: Vec<MetricDescriptor>,
+    },
     Samples {
         name: &'static str,
         children: Vec<MetricDescriptor>,
@@ -54,6 +60,7 @@ impl MetricDescriptor {
             Self::Value { name, .. }
             | Self::Group { name, .. }
             | Self::Map { name, .. }
+            | Self::Tree { name, .. }
             | Self::Samples { name, .. } => name,
         }
     }
@@ -67,6 +74,17 @@ impl MetricDescriptor {
             (Self::Map { children, .. }, MetricValue::Group(values)) => values.values().all(|value| {
                 matches!(value, MetricValue::Group(fields) if matches_group(children, fields))
             }),
+            (Self::Tree { children, .. }, MetricValue::OrderedGroup(nodes)) => {
+                nodes.iter().all(|(_, node)| {
+                    matches!(node, MetricValue::Group(fields) if fields.iter().all(|(name, value)| {
+                        if name == "children" {
+                            self.matches_value(value)
+                        } else {
+                            children.iter().any(|child| child.name() == name && child.matches_value(value))
+                        }
+                    }))
+                })
+            }
             (Self::Samples { children, .. }, MetricValue::Samples(samples)) => {
                 samples.iter().all(|sample| match sample {
                     MetricValue::Group(values) => matches_group(children, values),
@@ -108,6 +126,10 @@ impl MetricDescriptor {
     /// Named records whose keys are discovered from stored outputs.
     pub fn map(name: &'static str, children: Vec<Self>) -> Self {
         Self::Map { name, children }
+    }
+
+    pub fn tree(name: &'static str, children: Vec<Self>) -> Self {
+        Self::Tree { name, children }
     }
 
     pub fn samples(name: &'static str, children: Vec<Self>) -> Self {

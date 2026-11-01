@@ -28,6 +28,7 @@ const REPORT: &[u8] = br#"{
         "plugin.pass%": {"runtime_ns": 2000000, "num_calls": 1}
     }
 }"#;
+const CALLS: &[u8] = include_bytes!("../../../tests/fixtures/yosys-calls.json");
 
 #[derive(Debug)]
 struct ReportExecutor;
@@ -56,6 +57,7 @@ impl ProcessExecutor for ReportExecutor {
             )?;
         }
         fs::write(directory.join(".yosys-logs/timing.json"), REPORT)?;
+        fs::write(directory.join(".yosys-logs/calls.json"), CALLS)?;
         Ok(ProcessCapture {
             command: format!("{command:?}"),
             output: Output {
@@ -102,6 +104,37 @@ fn generic_yosys_measurement_retains_internal_statistics_and_the_raw_report() {
     assert_eq!(timings.passes["opt"].runtime, Duration::from_millis(3));
     assert_eq!(timings.passes["opt"].calls, 4);
     assert_eq!(timings.generator, "Yosys test");
+    let calls = timings.calls.as_ref().unwrap();
+    assert_eq!(
+        calls.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+        ["synth", "abc", "plugin.pass%~"]
+    );
+    assert_eq!(calls[0].runtime, Duration::from_millis(90));
+    assert_eq!(calls[0].self_runtime, Duration::from_millis(15));
+    assert_eq!(
+        calls[0]
+            .children
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>(),
+        ["proc", "opt", "opt"]
+    );
+    assert_eq!(
+        scalar(&output, "timings.calls.synth.children.opt.runtime"),
+        Some(0.025)
+    );
+    assert_eq!(
+        scalar(&output, "timings.calls.synth.children.opt~2.runtime"),
+        Some(0.030)
+    );
+    assert_eq!(
+        scalar(&output, "timings.calls.synth.children.proc.self_runtime"),
+        Some(0.015)
+    );
+    assert_eq!(
+        scalar(&output, "timings.calls.plugin%2Epass%25%7E.runtime"),
+        Some(0.0)
+    );
     assert_eq!(
         fs::read(directory.path().join("logs/yosys/timing.json")).unwrap(),
         REPORT
@@ -137,6 +170,30 @@ fn timing_reports_reject_missing_or_invalid_statistics_and_old_outputs_still_loa
 }
 
 #[test]
+fn call_traces_reject_invalid_nesting_and_preserve_legacy_reports() {
+    assert!(YosysTimings::parse(REPORT).unwrap().calls.is_none());
+    for trace in [
+        json!({"calls": [{"name": "opt", "parent": 0, "runtime_ns": 1}]}),
+        json!({"calls": [
+            {"name": "synth", "parent": null, "runtime_ns": 1},
+            {"name": "opt", "parent": 0, "runtime_ns": 2}
+        ]}),
+        json!({"calls": [
+            {"name": "synth", "parent": null, "runtime_ns": 10},
+            {"name": "abc", "parent": null, "runtime_ns": 10},
+            {"name": "opt", "parent": 0, "runtime_ns": 1}
+        ]}),
+    ] {
+        assert!(
+            YosysTimings::parse(REPORT)
+                .unwrap()
+                .with_call_trace(&serde_json::to_vec(&trace).unwrap())
+                .is_err()
+        );
+    }
+}
+
+#[test]
 fn stored_pass_metrics_are_discovered_and_missing_timings_remain_gaps() {
     let mut store = SqliteStore::in_memory().unwrap();
     let definition = SuiteDefinition::new(
@@ -167,7 +224,12 @@ fn stored_pass_metrics_are_discovered_and_missing_timings_remain_gaps() {
         let attempt = store.start_attempt(work, 0).unwrap();
         let mut output = YosysBenchmarkOutput::new(Duration::from_secs(1), ());
         if revision == "new" {
-            output = output.with_timings(YosysTimings::parse(REPORT).unwrap());
+            output = output.with_timings(
+                YosysTimings::parse(REPORT)
+                    .unwrap()
+                    .with_call_trace(CALLS)
+                    .unwrap(),
+            );
         }
         store
             .finish_attempt::<Timing>(
@@ -190,6 +252,25 @@ fn stored_pass_metrics_are_discovered_and_missing_timings_remain_gaps() {
     let metric = metadata.metrics.iter().find(|m| m.path == path).unwrap();
     assert_eq!(metric.unit, "s");
     assert_eq!(metric.direction, Direction::Lower);
+    let ordered: Vec<_> = metadata
+        .metrics
+        .iter()
+        .filter(|m| m.path.starts_with("timings.calls.") && m.path.ends_with(".runtime"))
+        .map(|m| m.path.as_str())
+        .collect();
+    assert_eq!(
+        ordered,
+        [
+            "timings.calls.synth.runtime",
+            "timings.calls.synth.children.proc.runtime",
+            "timings.calls.synth.children.proc.children.clean.runtime",
+            "timings.calls.synth.children.opt.runtime",
+            "timings.calls.synth.children.opt.children.clean.runtime",
+            "timings.calls.synth.children.opt~2.runtime",
+            "timings.calls.abc.runtime",
+            "timings.calls.plugin%2Epass%25%7E.runtime",
+        ]
+    );
     assert!(
         metadata
             .metrics
@@ -230,5 +311,15 @@ fn stored_pass_metrics_are_discovered_and_missing_timings_remain_gaps() {
     assert_eq!(
         backend.analyze(&plan).unwrap().series[0].points[0].value,
         Some(4.)
+    );
+    plan.metric = Some("timings.calls.synth.runtime".into());
+    assert_eq!(
+        backend.analyze(&plan).unwrap().series[0].points[0].value,
+        Some(0.09)
+    );
+    plan.metric = Some("timings.calls.synth.children.opt~2.runtime".into());
+    assert_eq!(
+        backend.analyze(&plan).unwrap().series[0].points[0].value,
+        Some(0.03)
     );
 }

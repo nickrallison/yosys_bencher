@@ -6,4 +6,6 @@
 - More Testing
   - Mocking Runners
   - What is the test boundary, the DB, or just do input to analysis
-- Annotate inputs to individual runs
+- Cron Runner
+- Rerunning
+  - n times or until confidence interval ...

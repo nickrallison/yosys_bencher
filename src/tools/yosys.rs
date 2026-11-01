@@ -9,6 +9,7 @@ use crate::experiment::{ExperimentError, ProcessOutput, RunContext, check_label}
 
 mod capture;
 pub mod design;
+pub(crate) mod instrumentation;
 mod plan;
 mod statistics;
 mod timings;
@@ -17,7 +18,7 @@ pub use capture::YosysCapture;
 use design::{Design, SourceFile};
 pub use plan::YosysPlan;
 pub use statistics::Statistics;
-pub use timings::{PassTiming, YosysTimings};
+pub use timings::{PassCall, PassTiming, YosysTimings};
 pub use workspace::PreparedYosysJob;
 
 type Result<T> = std::result::Result<T, ExperimentError>;
@@ -26,11 +27,21 @@ type Result<T> = std::result::Result<T, ExperimentError>;
 pub struct Yosys {
     #[get = "pub"]
     path: PathBuf,
+    call_trace: bool,
 }
 
 impl Yosys {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            call_trace: false,
+        }
+    }
+
+    /// Require the call trace emitted by a benchmark-instrumented Yosys build.
+    pub fn with_call_trace(mut self) -> Self {
+        self.call_trace = true;
+        self
     }
 }
 
@@ -108,12 +119,14 @@ impl YosysRun {
 
 pub struct YosysRunner {
     executable: PathBuf,
+    call_trace: bool,
 }
 
 impl YosysRunner {
     pub fn new(yosys: &Yosys) -> Result<Self> {
         Ok(Self {
             executable: super::executable(yosys.path())?,
+            call_trace: yosys.call_trace,
         })
     }
 
@@ -140,6 +153,9 @@ impl YosysRunner {
         context: &mut RunContext,
     ) -> Result<YosysRun> {
         let captured = self.capture(job, "run.ys", label, true, context)?;
+        if self.call_trace && !captured.files.contains_key(Path::new("calls.json")) {
+            return Err(ExperimentError::Parse("missing Yosys call trace".into()));
+        }
         YosysRun::decode(&job.plan, captured)
     }
 
@@ -201,8 +217,10 @@ impl YosysRunner {
         command.current_dir(directory).arg("-Q");
         if timings {
             command.args(["--perffile", ".yosys-logs/timing.json"]);
+            command.env("YOSYS_BENCH_CALL_TRACE", ".yosys-logs/calls.json");
         } else {
             command.arg("-T");
+            command.env_remove("YOSYS_BENCH_CALL_TRACE");
         }
         command.args(["-s", script]);
         command

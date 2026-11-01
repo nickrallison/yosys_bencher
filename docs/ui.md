@@ -42,8 +42,15 @@ The metric picker shows derived measurements first, followed by submeasurement
 groups. Open a group to see its immediate children; **Back** moves up one level
 and **All** returns to the top. The selected metric stays visible above the picker;
 click it to return to its group. Browsing groups does not change the selection.
-For new Yosys measurements, open **Timings → Passes → pass name** to select self
-CPU runtime or call count. In MCM these sit inside **Baseline** and **Optimized**.
+For new provider-built Yosys measurements, open **Timings → Calls → synth** to
+select its inclusive CPU **runtime** or its **self runtime**, excluding subpasses.
+Open a subpass to select its own timing. Calls appear in execution order;
+repeated siblings appear as **opt**, **opt (2)**, and so on. The hierarchy keeps
+the same pass under different parents separate. In MCM these sit inside
+**Baseline** and **Optimized**.
+**Timings → Passes → pass name** retains aggregate self CPU time and call count
+across all invocations, including historical flat reports. Existing measurements
+need a new benchmark run to gain the call tree.
 **Timings → Total** is Yosys's internal CPU total; **Runtime** is elapsed wall time.
 
 Input search and typed filters operate across all pages. Inputs can be selected

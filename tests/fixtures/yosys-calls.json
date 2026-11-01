@@ -1,0 +1,11 @@
+{"calls":[
+  {"name":"tee","parent":null,"runtime_ns":100000000},
+  {"name":"synth","parent":0,"runtime_ns":90000000},
+  {"name":"proc","parent":1,"runtime_ns":20000000},
+  {"name":"clean","parent":2,"runtime_ns":5000000},
+  {"name":"opt","parent":1,"runtime_ns":25000000},
+  {"name":"clean","parent":4,"runtime_ns":5000000},
+  {"name":"opt","parent":1,"runtime_ns":30000000},
+  {"name":"abc","parent":null,"runtime_ns":40000000},
+  {"name":"plugin.pass%~","parent":null,"runtime_ns":0}
+]}
