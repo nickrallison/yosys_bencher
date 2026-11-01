@@ -15,12 +15,21 @@ workspace styling and Plotly bridge.
 `ExperimentSpec`. The MCM command still writes its JSON report as well.
 
 ```sh
+./benchmarks/mcm/download_acm.sh
+make -C benchmarks/mcm/acm acm
 cargo run --quiet --bin run_mcm
 cargo run --bin results -- list
 cargo run --bin results -- describe 1
 cargo run --bin results -- runs 1
 cargo run --bin results -- analyze plan.json
 ```
+
+MCM assets and the reference tool download script are in
+[`benchmarks/mcm`](../benchmarks/mcm/README.md). Downloaded ACM sources and
+build products are ignored. The runner uses an ignored
+`yosys/` checkout at the repository root, whose origin is `YosysHQ/yosys`.
+That checkout must contain the local `nick/mcm` benchmark branch; the runner
+clones it into `output/mcm/source/` for builds.
 
 Both `run_mcm` and `build_yosys` show elapsed time, overall progress, and the
 current revision/build phase. Measurement progress also includes the input,

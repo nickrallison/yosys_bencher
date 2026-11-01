@@ -30,19 +30,22 @@ fn main() -> ExitCode {
 
 fn run(progress: &Progress) -> Result<(), Box<dyn std::error::Error>> {
     progress.stage("Loading benchmark configuration");
-    let output_dir = PathBuf::from("output/mcm");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let output_dir = root.join("output/mcm");
+    let assets = root.join("benchmarks/mcm");
     let suite = McmSuite::new(
         CoefficientSets::Generated(CoefficientGenerator::default()),
-        CellLibrary::from_path("../yosys/tests/techmap/mcm/NangateOpenCellLibrary_typical.lib")?,
+        CellLibrary::from_path(assets.join("NangateOpenCellLibrary_typical.lib"))?,
         PaperTool {
-            executable: "../yosys/tests/techmap/mcm/synth/acm".into(),
+            executable: assets.join("acm/acm"),
         },
     );
     let builder = CcacheCMakeBuilder::new(output_dir.join("ccache"))
         .configure_arg("-DYOSYS_USE_BUNDLED_LIBS=ON")
         .configure_arg("-DYOSYS_ENABLE_UNIT_TESTS=OFF");
     let mut provider = YosysProvider {
-        git: GitManager::new(output_dir.join("source"), "nick/mcm", None).with_remote("../yosys"),
+        git: GitManager::new(output_dir.join("source"), "nick/mcm", None)
+            .with_remote(root.join("yosys").into_os_string()),
         builder,
         output_dir: output_dir.join("builds"),
     };
