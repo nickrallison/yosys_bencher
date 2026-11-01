@@ -1,7 +1,10 @@
 use crate::{
-    benchmarks::synth::{CellLibrary, SynthConfig, comparison::compare},
+    benchmarks::{
+        synth::{CellLibrary, SynthConfig, SynthFlow, SynthMeasurements},
+        yosys::measure,
+    },
     experiment::{BenchmarkIn, ExperimentError, Procedure, RunContext, Suite},
-    tools::yosys::Yosys,
+    tools::yosys::{Yosys, YosysJob, YosysRunner},
 };
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
@@ -119,23 +122,41 @@ impl Procedure for McmProcedure {
         input.validate()?;
         tools.paper.validate_identity(&input.paper_identity)?;
         let design = design::build(input)?;
-        compare(
-            &tools.yosys,
-            &design,
-            &input.synthesis,
+        let runner = YosysRunner::new(&tools.yosys)?;
+        let baseline = runner.prepare(&SynthFlow::job(&design, &input.synthesis)?, context)?;
+        let mut job = YosysJob::new(design)?;
+        job.timings = true;
+        job.stage_with_statistics(
+            "mcm",
+            vec![format!(
+                "mcm -depth {} -search_budget {}",
+                input.options.max_depth, input.options.search_budget,
+            )],
+        )?;
+        SynthFlow::append(&mut job, &input.synthesis)?;
+        let optimized = runner.prepare(&job, context)?;
+        let optimized_output = measure(&runner, &optimized, "optimized", context, |run| {
+            Ok(OptimizedMeasurements {
+                optimization: McmMeasurements::parse_run(run)?,
+                synthesis: SynthMeasurements::parse(run)?,
+            })
+        })?;
+        let reference = tools.paper.reference(input, context)?;
+        let baseline_output = measure(
+            &runner,
+            &baseline,
+            "baseline",
             context,
-            |job| {
-                job.stage_with_statistics(
-                    "mcm",
-                    vec![format!(
-                        "mcm -depth {} -search_budget {}",
-                        input.options.max_depth, input.options.search_budget,
-                    )],
-                )
-            },
-            McmMeasurements::parse_run,
-            |context| tools.paper.reference(input, context),
-        )
+            SynthMeasurements::parse,
+        )?;
+        for (label, job) in [("baseline", &baseline), ("optimized", &optimized)] {
+            runner.diagnose(job, label, context);
+        }
+        Ok(McmOutput {
+            reference,
+            baseline: baseline_output,
+            optimized: optimized_output,
+        })
     }
 }
 

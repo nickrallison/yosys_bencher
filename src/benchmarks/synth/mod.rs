@@ -11,8 +11,6 @@ use std::{collections::HashMap, path::Path};
 
 type Result<T> = std::result::Result<T, ExperimentError>;
 
-pub mod comparison;
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Getters)]
 pub struct TimingConfig {
     #[get = "pub"]
