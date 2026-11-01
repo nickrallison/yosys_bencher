@@ -55,6 +55,9 @@ fn run(progress: &Progress) -> Result<(), Box<dyn std::error::Error>> {
         &mut provider,
         &RunOptions {
             progress: progress.clone(),
+            perf: Some(yosys_bench::tools::perf::PerfProfiler::new(
+                "llvm-addr2line",
+            )?),
             ..RunOptions::default()
         },
     )?;

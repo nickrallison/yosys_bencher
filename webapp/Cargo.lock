@@ -214,6 +214,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "dioxus",
+ "dioxus-html",
  "serde",
  "serde_json",
  "yosys-bench-ui-types",

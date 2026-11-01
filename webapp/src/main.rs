@@ -6,6 +6,7 @@ mod controls;
 mod filters;
 mod inputs;
 mod inspection;
+mod metric_picker;
 mod model;
 mod output;
 use model::*;

@@ -157,15 +157,6 @@ pub fn Sidebar(
 ) -> Element {
     let m = metric(&meta, &plan).cloned();
     let is_coverage = matches!(plan.operation, Operation::Coverage);
-    let mut metrics = meta
-        .description
-        .metrics
-        .iter()
-        .map(|m| (m.path.clone(), format!("{} ({})", label(&m.label), m.unit)))
-        .collect::<Vec<_>>();
-    if is_coverage {
-        metrics.insert(0, (String::new(), "Execution states only".into()));
-    }
     let error_field = error.as_ref().and_then(|e| e.field.clone());
     rsx! {
         aside { class: "analysis-sidebar", aria_label: "Analysis editor",
@@ -183,10 +174,10 @@ pub fn Sidebar(
                     ],
                     on_change: move |v| on_edit.call(Edit::Mode(v)),
                 }
-                Choice {
-                    label: if is_coverage { "Metric availability" } else { "Metric" },
-                    value: plan.metric.clone().unwrap_or_default(),
-                    options: metrics,
+                crate::metric_picker::MetricPicker {
+                    metrics: meta.description.metrics.clone(),
+                    value: plan.metric.clone(),
+                    allow_none: is_coverage,
                     on_change: move |v| on_edit.call(Edit::Metric(v)),
                 }
                 if let Some(m) = &m {

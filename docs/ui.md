@@ -38,6 +38,11 @@ with the analysis mode and metric, followed by shared data and run controls:
 - Coverage: execution states and optional metric availability against the selected
   workload, including failed builds and unfinished work.
 
+The metric picker shows derived measurements first, followed by submeasurement
+groups. Open a group to see its immediate children; **Back** moves up one level
+and **All** returns to the top. The selected metric stays visible above the picker;
+click it to return to its group. Browsing groups does not change the selection.
+
 Input search and typed filters operate across all pages. Inputs can be selected
 individually or by a predicate with exclusions. Revision selection preserves
 explicit order. Environment/configuration partitions stay separate; selecting
