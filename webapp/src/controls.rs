@@ -20,6 +20,8 @@ pub enum Edit {
     Repetitions(Reduction),
     InputReduction(Reduction),
     Series(Vec<Dimension>),
+    View(String),
+    ResetAdvanced,
     Coverage(CoveragePolicy),
     Normalization(Option<Normalization>),
     Operation(Operation),
@@ -65,6 +67,33 @@ pub fn apply(plan: &mut AnalysisPlan, edit: Edit, meta: &Metadata) -> Option<Str
                 plan.runs = Some(RunTreatment::Separate);
             }
             plan.series = v;
+        }
+        Edit::View(value) => {
+            plan.series = if value == "inputs" {
+                vec![Dimension::Input]
+            } else {
+                vec![]
+            };
+            plan.inputs = Reduction::Mean;
+            plan.repetitions = Reduction::Mean;
+        }
+        Edit::ResetAdvanced => {
+            let individual = !plan.series.is_empty();
+            let path = plan
+                .metric
+                .clone()
+                .or_else(|| meta.description.default_metric.clone())
+                .unwrap_or_default();
+            let mut selection = plan.selection.clone();
+            selection.sources = VersionSources::CompatibleSupersets;
+            selection.partitions = PartitionSelection::Automatic;
+            selection.runs = RunSelection::LatestCompleted;
+            selection.run_filters.clear();
+            *plan = AnalysisPlan::history(selection, path);
+            if individual {
+                plan.series = vec![Dimension::Input];
+            }
+            return Some("Advanced analysis settings reset. Metric, inputs, commits and workload version were kept.".into());
         }
         Edit::Coverage(v) => plan.coverage = v,
         Edit::Normalization(v) => plan.normalization = v,
@@ -155,195 +184,297 @@ pub fn Sidebar(
     on_plot: EventHandler<PlotOptions>,
     on_apply: EventHandler<()>,
 ) -> Element {
+    let mut show_advanced = use_signal(|| false);
     let m = metric(&meta, &plan).cloned();
-    let is_coverage = matches!(plan.operation, Operation::Coverage);
+    let active = advanced_active(&plan) || custom_commit_order(&meta, &plan.selection.revisions);
     let error_field = error.as_ref().and_then(|e| e.field.clone());
     rsx! {
-        aside { class: "analysis-sidebar", aria_label: "Analysis editor",
+        aside { class: "analysis-sidebar", aria_label: "Chart controls",
             section { class: "editor-section", id: "metric-controls",
-                h2 { "Analysis" }
-                Choice {
-                    label: "Analysis",
-                    value: mode(&plan.operation),
-                    options: vec![
-                        ("history".into(), "History".into()),
-                        ("changes".into(), "Changes".into()),
-                        ("scaling".into(), "Scaling".into()),
-                        ("variation".into(), "Variation".into()),
-                        ("coverage".into(), "Coverage".into()),
-                    ],
-                    on_change: move |v| on_edit.call(Edit::Mode(v)),
-                }
+                h2 { "Metric" }
                 crate::metric_picker::MetricPicker {
                     metrics: meta.description.metrics.clone(),
                     value: plan.metric.clone(),
-                    allow_none: is_coverage,
+                    allow_none: matches!(plan.operation, Operation::Coverage),
                     on_change: move |v| on_edit.call(Edit::Metric(v)),
                 }
                 if let Some(m) = &m {
                     p { class: "muted", "{m.description}" }
-                    p { class: "muted",
-                        match m.direction {
-                            Direction::Lower => "Lower is better.",
-                            Direction::Higher => "Higher is better.",
-                            Direction::Unspecified => "No improvement direction is declared.",
-                        }
-                    }
+                    if m.direction == Direction::Lower { p { class: "muted", "Lower is better." } }
+                    if m.direction == Direction::Higher { p { class: "muted", "Higher is better." } }
                 }
             }
-            section { class: "editor-section", id: "data-controls",
-                h2 { "Data" }
-                Choice {
-                    label: "Version sources",
-                    value: encoded(&plan.selection.sources),
-                    options: vec![
-                        (
-                            encoded(&VersionSources::CompatibleSupersets),
-                            "Compatible minor versions".into(),
-                        ),
-                        (encoded(&VersionSources::Exact), "Exact version only".into()),
-                    ],
-                    on_change: move |v: String| {
-                        if let Some(v) = decoded(&v) {
-                            on_edit.call(Edit::Sources(v));
-                        }
-                    },
-                }
-                InputPicker {
-                    meta: meta.clone(),
-                    selection: plan.selection.clone(),
-                    on_edit,
-                }
+            section { class: "editor-section", id: "input-controls",
+                h2 { "Inputs" }
+                InputPicker { meta: meta.clone(), selection: plan.selection.clone(), on_edit }
+            }
+            section { class: "editor-section", id: "commit-controls",
+                h2 { "Commits" }
                 CommitPicker {
-                    meta: meta.clone(),
-                    value: plan.selection.revisions.clone(),
-                    on_change: move | v | on_edit
-                            .call(Edit::Revisions(v)),
+                    meta: meta.clone(), value: plan.selection.revisions.clone(),
+                    on_change: move |v| on_edit.call(Edit::Revisions(v)),
                 }
             }
-            section { class: "editor-section", id: "run-controls",
-                h2 { "Runs and environments" }
-                RunControls { meta: meta.clone(), plan: plan.clone(), on_edit }
+            if matches!(plan.operation, Operation::History) {
+                section { class: "editor-section", id: "display-controls",
+                    h2 { "Display" }
+                    DisplayControls { plan: plan.clone(), plot: plot.clone(), on_edit, on_plot }
+                }
             }
-            section { class: "editor-section", id: "operation-controls",
-                h2 {
-                    match plan.operation {
-                        Operation::History => "Relative history",
-                        Operation::Changes { .. } => "Find changes",
-                        Operation::Scaling { .. } => "Parameter scaling",
-                        Operation::Variation { .. } => "Variation",
-                        Operation::Coverage => "Coverage",
+            section { class: "editor-section advanced-entry",
+                button {
+                    r#type: "button", class: "advanced-toggle", aria_label: "Advanced options",
+                    aria_expanded: show_advanced(), aria_controls: "advanced-options",
+                    onclick: move |_| { let open = show_advanced(); show_advanced.set(!open); },
+                    if show_advanced() { "Hide advanced options" } else { "Advanced options" }
+                    if active { small { class: "badge", "Active" } }
+                }
+                if active { p { class: "muted", "Advanced settings selected." } }
+            }
+            // Keep specialist controls available, but out of the usual metric/input/commit workflow.
+            // Rendering them on demand also avoids fetching unused grouping previews.
+            if show_advanced() {
+                div { id: "advanced-options", class: "advanced-options",
+                    AdvancedSidebar { meta: meta.clone(), plan: plan.clone(), plot, on_edit, on_plot }
+                    section { class: "editor-section",
+                        button { r#type: "button", onclick: move |_| on_edit.call(Edit::ResetAdvanced), "Reset advanced analysis" }
+                        p { class: "muted", "Keeps your metric, selected inputs, commits and workload version." }
                     }
                 }
-                ModeControls { meta: meta
-                            .clone(), plan: plan.clone(), on_edit }
-            }
-            if !is_coverage {
-                section { class: "editor-section", id: "summary-controls",
-                    h2 { "Summarize" }
-                    if let Some(m) = &m {
-                        Reduce {
-                            label: "Repetitions",
-                            value: plan.repetitions,
-                            options: m
-                                    .repetitions.clone(),
-                            on_change: move |r| on_edit.call(Edit::Repetitions(r)),
-                        }
-                        if !matches!(
-                            plan.operation,
-                            Operation::Variation {
-                                population: Population::WithinRun | Population::BetweenRuns,
-                            }
-                        )
-                        {
-                            Reduce {
-                                label: "Inputs",
-                                value: plan.inputs,
-                                options: {
-                                    let mut values = m.inputs.clone();
-                                    if plan.normalization.as_ref().is_some_and(|n| n.kind == ChangeKind::Ratio)
-                                        && !values.contains(&Reduction::GeometricMean)
-                                    {
-                                        values.push(Reduction::GeometricMean);
-                                    }
-                                    values
-                                },
-                                disabled: plan.series.iter().any(|d| matches!(d, Dimension::Input)),
-                                on_change: move |r| on_edit.call(Edit::InputReduction(r)),
-                            }
-                        }
-                        if plan.inputs == Reduction::StdDev {
-                            p { class: "muted", "This plots differences between inputs as the value. Use Mean for the central estimate." }
-                            button {
-                                r#type: "button",
-                                onclick: move |_| {
-                                    on_edit.call(Edit::InputReduction(Reduction::Mean));
-                                },
-                                "Use mean"
-                            }
-                        }
-                        if let MetricSource::Formula { numerator, denominator, stage, .. } = &m.source {
-                            p { class: "muted",
-                                "Formula operands: {label(numerator)} and {label(denominator)}. "
-                                match stage {
-                                    FormulaStage::Repetition => "Computed per repetition.",
-                                    FormulaStage::Input => "Computed after per-input estimation.",
-                                    FormulaStage::Suite => "Computed after combining matched inputs.",
-                                }
-                            }
-                        }
-                    }
-                    GroupControls { meta: meta
-                                .clone(), plan: plan.clone(), on_edit }
-                    p { class: "muted", "Reduce repetitions first; each input has equal weight." }
-                }
-            }
-            section { class: "editor-section", id: "coverage-controls",
-                h2 { "Coverage policy" }
-                Choice {
-                    label: "Coverage policy",
-                    value: encoded(&plan.coverage),
-                    disabled: is_coverage,
-                    options: vec![
-                        (encoded(&CoveragePolicy::Strict), "Require every selected input".into()),
-                        (encoded(&CoveragePolicy::Common), "Fixed common input set".into()),
-                        (encoded(&CoveragePolicy::Available), "Available inputs per revision".into()),
-                    ],
-                    on_change: move |v: String| {
-                        if let Some(v) = decoded(&v) {
-                            on_edit.call(Edit::Coverage(v));
-                        }
-                    },
-                }
-                p { class: "muted",
-                    match plan.coverage {
-                        CoveragePolicy::Strict => "Missing required inputs produce chart gaps.",
-                        CoveragePolicy::Common => "Every revision uses the same matched inputs.",
-                        CoveragePolicy::Available => {
-                            "The inputs contributing to each revision may differ."
-                        }
-                    }
-                }
-            }
-            if !is_coverage {
-                details { class: "editor-section",
-                    summary { "Filters and change cohorts" }
-                    AdvancedControls { meta: meta.clone(), plan: plan.clone(), on_edit }
-                }
-            }
-            section { class: "editor-section", id: "plot-controls",
-                h2 { "Plot" }
-                PlotControls { plot, operation: plan.operation.clone(), on_change: on_plot }
             }
             div { class: "apply-controls",
                 if let Some(field) = error_field {
-                    p { class: "error", "Check {field}." }
+                    p { class: "error",
+                        if field == "metric" { "Choose a metric above." }
+                        else if field.starts_with("selection.inputs") { "Check the selected inputs above." }
+                        else if field.starts_with("selection.revisions") { "Check the selected commits above." }
+                        else { "Check {field} in Advanced options." }
+                    }
                 }
-                button { class: "primary", onclick: move |_| on_apply.call(()), "Update analysis" }
-                if pending {
-                    p { class: "muted", role: "status", "Changes pending" }
+                button { class: "primary", onclick: move |_| on_apply.call(()), "Update chart" }
+                if pending { p { class: "muted", role: "status", "Unapplied changes" } }
+            }
+        }
+    }
+}
+
+#[component]
+fn DisplayControls(
+    plan: AnalysisPlan,
+    plot: PlotOptions,
+    on_edit: EventHandler<Edit>,
+    on_plot: EventHandler<PlotOptions>,
+) -> Element {
+    let view = line_view(&plan);
+    let mut options = vec![
+        ("inputs".into(), "One line per input".into()),
+        ("suite".into(), "Suite average".into()),
+    ];
+    if view == "custom" {
+        options.push(("custom".into(), "Custom view (advanced)".into()));
+    }
+    let sd = plot.clone();
+    rsx! {
+        Choice {
+            label: "Lines", value: view, options,
+            on_change: move |value: String| { if value != "custom" { on_edit.call(Edit::View(value)); } },
+        }
+        p { class: "muted",
+            if view == "suite" { "One line averages the selected inputs. Choose one line per input to see repeat variability." }
+            else if view == "custom" { "Custom averaging or grouping is selected in Advanced options." }
+            else if advanced_active(&plan) { "Advanced settings change how these values are calculated." }
+            else { "Each point is the mean of repeated measurements of that input." }
+        }
+        Toggle {
+            label: "Standard deviation (±1 SD)", value: plot.show_spread, disabled: view != "inputs",
+            on_change: move |show_spread| on_plot.call(PlotOptions { show_spread, ..sd.clone() }),
+        }
+        Toggle {
+            label: "Range (min–max)", value: plot.show_range, disabled: view != "inputs",
+            on_change: move |show_range| on_plot.call(PlotOptions { show_range, ..plot.clone() }),
+        }
+    }
+}
+
+#[component]
+fn AdvancedSidebar(
+    meta: Metadata,
+    plan: AnalysisPlan,
+    plot: PlotOptions,
+    on_edit: EventHandler<Edit>,
+    on_plot: EventHandler<PlotOptions>,
+) -> Element {
+    let m = metric(&meta, &plan).cloned();
+    let is_coverage = matches!(plan.operation, Operation::Coverage);
+    rsx! {
+        section { class: "editor-section",
+            h2 { "Other analysis views" }
+            Choice {
+                label: "Analysis",
+                value: mode(&plan.operation),
+                options: vec![
+                    ("history".into(), "History".into()),
+                    ("changes".into(), "Changes".into()),
+                    ("scaling".into(), "Scaling".into()),
+                    ("variation".into(), "Variation".into()),
+                    ("coverage".into(), "Coverage".into()),
+                ],
+                on_change: move |v| on_edit.call(Edit::Mode(v)),
+            }
+
+        }
+        section { class: "editor-section",
+            details { class: "more-options",
+                summary { "Custom commit order" }
+                CommitPicker { custom_order: true, meta: meta.clone(), value: plan.selection.revisions.clone(), on_change: move |value| on_edit.call(Edit::Revisions(value)) }
+            }
+        }
+        section { class: "editor-section", id: "version-controls",
+            h2 { "Data versions" }
+            Choice {
+                label: "Workload version",
+                value: plan.selection.version.map(version).unwrap_or_default(),
+                options: meta.description.versions.iter().map(|v| (
+                    version(v.version), format!("v{} · {} inputs", version(v.version), v.input_count),
+                )).collect(),
+                on_change: {
+                    let versions = meta.description.versions.clone();
+                    move |value: String| { if let Some(v) = versions.iter().find(|v| version(v.version) == value) { on_edit.call(Edit::Version(v.version)); } }
+                },
+            }
+            Choice {
+                label: "Version sources",
+                value: encoded(&plan.selection.sources),
+                options: vec![
+                    (
+                        encoded(&VersionSources::CompatibleSupersets),
+                        "Compatible minor versions".into(),
+                    ),
+                    (encoded(&VersionSources::Exact), "Exact version only".into()),
+                ],
+                on_change: move |v: String| {
+                    if let Some(v) = decoded(&v) {
+                        on_edit.call(Edit::Sources(v));
+                    }
+                },
+            }
+
+            p { class: "muted", "Controls which recorded workload definitions can supply measurements. The default uses compatible versions." }
+        }
+        section { class: "editor-section", id: "run-controls",
+            h2 { "Runs and environments" }
+            RunControls { meta: meta.clone(), plan: plan.clone(), on_edit }
+        }
+        section { class: "editor-section", id: "operation-controls",
+            h2 {
+                match plan.operation {
+                    Operation::History => "Relative history",
+                    Operation::Changes { .. } => "Find changes",
+                    Operation::Scaling { .. } => "Parameter scaling",
+                    Operation::Variation { .. } => "Variation",
+                    Operation::Coverage => "Coverage",
                 }
             }
+            ModeControls { meta: meta
+                        .clone(), plan: plan.clone(), on_edit }
+        }
+        if !is_coverage {
+            section { class: "editor-section", id: "summary-controls",
+                h2 { "Custom grouping and averages" }
+                if let Some(m) = &m {
+                    Reduce {
+                        label: "Repetitions",
+                        value: plan.repetitions,
+                        options: m
+                                .repetitions.clone(),
+                        on_change: move |r| on_edit.call(Edit::Repetitions(r)),
+                    }
+                    if !matches!(
+                        plan.operation,
+                        Operation::Variation {
+                            population: Population::WithinRun | Population::BetweenRuns,
+                        }
+                    )
+                    {
+                        Reduce {
+                            label: "Inputs",
+                            value: plan.inputs,
+                            options: {
+                                let mut values = m.inputs.clone();
+                                if plan.normalization.as_ref().is_some_and(|n| n.kind == ChangeKind::Ratio)
+                                    && !values.contains(&Reduction::GeometricMean)
+                                {
+                                    values.push(Reduction::GeometricMean);
+                                }
+                                values
+                            },
+                            disabled: plan.series.iter().any(|d| matches!(d, Dimension::Input)),
+                            on_change: move |r| on_edit.call(Edit::InputReduction(r)),
+                        }
+                    }
+                    if plan.inputs == Reduction::StdDev {
+                        p { class: "muted", "This plots differences between inputs as the value. Use Mean for the central estimate." }
+                        button {
+                            r#type: "button",
+                            onclick: move |_| {
+                                on_edit.call(Edit::InputReduction(Reduction::Mean));
+                            },
+                            "Use mean"
+                        }
+                    }
+                    if let MetricSource::Formula { numerator, denominator, stage, .. } = &m.source {
+                        p { class: "muted",
+                            "Formula operands: {label(numerator)} and {label(denominator)}. "
+                            match stage {
+                                FormulaStage::Repetition => "Computed per repetition.",
+                                FormulaStage::Input => "Computed after per-input estimation.",
+                                FormulaStage::Suite => "Computed after combining matched inputs.",
+                            }
+                        }
+                    }
+                }
+                GroupControls { meta: meta
+                            .clone(), plan: plan.clone(), on_edit }
+                p { class: "muted", "Reduce repetitions first; each input has equal weight." }
+            }
+        }
+        section { class: "editor-section", id: "coverage-controls",
+            h2 { "Coverage policy" }
+            Choice {
+                label: "Coverage policy",
+                value: encoded(&plan.coverage),
+                disabled: is_coverage,
+                options: vec![
+                    (encoded(&CoveragePolicy::Strict), "Require every selected input".into()),
+                    (encoded(&CoveragePolicy::Common), "Fixed common input set".into()),
+                    (encoded(&CoveragePolicy::Available), "Available inputs per revision".into()),
+                ],
+                on_change: move |v: String| {
+                    if let Some(v) = decoded(&v) {
+                        on_edit.call(Edit::Coverage(v));
+                    }
+                },
+            }
+            p { class: "muted",
+                match plan.coverage {
+                    CoveragePolicy::Strict => "Missing required inputs produce chart gaps.",
+                    CoveragePolicy::Common => "Every revision uses the same matched inputs.",
+                    CoveragePolicy::Available => {
+                        "The inputs contributing to each revision may differ."
+                    }
+                }
+            }
+        }
+        if !is_coverage {
+            details { class: "editor-section",
+                summary { "Filters and change cohorts" }
+                AdvancedControls { meta: meta.clone(), plan: plan.clone(), on_edit }
+            }
+        }
+
+        section { class: "editor-section", id: "plot-controls",
+            h2 { "Axes and reference lines" }
+            AdvancedPlotControls { plot, operation: plan.operation.clone(), on_change: on_plot }
         }
     }
 }
@@ -388,9 +519,12 @@ pub fn RevisionField(
 fn CommitPicker(
     meta: Metadata,
     value: RevisionQuery,
+    #[props(default)] custom_order: bool,
     on_change: EventHandler<RevisionQuery>,
 ) -> Element {
-    let mode = match &value {
+    let mut query = use_signal(String::new);
+    let custom_selection = custom_commit_order(&meta, &value);
+    let mode = match value {
         RevisionQuery::All => "all",
         RevisionQuery::Range { .. } => "range",
         RevisionQuery::Only { .. } => "only",
@@ -399,98 +533,65 @@ fn CommitPicker(
         RevisionQuery::Range { start, end } => (start.clone(), end.clone()),
         _ => (None, None),
     };
-    let mut starts = vec![(String::new(), "First recorded revision".into())];
+    let mut starts = vec![(String::new(), "First recorded commit".into())];
     starts.extend(revision_options(&meta));
-    let mut ends = vec![(String::new(), "Last recorded revision".into())];
+    let mut ends = vec![(String::new(), "Last recorded commit".into())];
     ends.extend(revision_options(&meta));
+    let search = query().to_lowercase();
     rsx! {
         Choice {
-            label: "Revisions",
-            value: mode,
-            options: vec![
-                ("all".into(), "All recorded revisions".into()),
-                ("range".into(), "Revision range".into()),
-                ("only".into(), "Choose revisions and order".into()),
-            ],
-            on_change: move |v: String| {
-                on_change
-                    .call(
-                        match v.as_str() {
-                            "range" => {
-                                RevisionQuery::Range {
-                                    start: None,
-                                    end: None,
-                                }
-                            }
-                            "only" => RevisionQuery::Only { ids: vec![] },
-                            _ => RevisionQuery::All,
-                        },
-                    )
+            label: "Commit selection", value: mode,
+            options: vec![("all".into(), "All commits".into()), ("range".into(), "Commit range".into()), ("only".into(), "Choose commits".into())],
+            on_change: move |value: String| {
+                query.set(String::new());
+                on_change.call(match value.as_str() {
+                    "range" => RevisionQuery::Range { start: None, end: None },
+                    "only" => RevisionQuery::Only { ids: vec![] },
+                    _ => RevisionQuery::All,
+                });
             },
         }
         if mode == "range" {
             Choice {
-                label: "From",
-                value: start.clone().unwrap_or_default(),
-                options: starts,
-                on_change: {
-                    let end = end.clone();
-                    move |v: String| {
-                        on_change
-                            .call(RevisionQuery::Range {
-                                start: (!v.is_empty()).then_some(v),
-                                end: end.clone(),
-                            })
-                    }
-                },
+                label: "First commit", value: start.clone().unwrap_or_default(), options: starts,
+                on_change: { let end = end.clone(); move |value: String| on_change.call(RevisionQuery::Range { start: (!value.is_empty()).then_some(value), end: end.clone() }) },
             }
             Choice {
-                label: "Through",
-                value: end.unwrap_or_default(),
-                options: ends,
-                on_change: move |v: String| {
-                    on_change
-                        .call(RevisionQuery::Range {
-                            start: start.clone(),
-                            end: (!v.is_empty()).then_some(v),
-                        })
-                },
+                label: "Last commit", value: end.unwrap_or_default(), options: ends,
+                on_change: move |value: String| on_change.call(RevisionQuery::Range { start: start.clone(), end: (!value.is_empty()).then_some(value) }),
             }
+            p { class: "muted", "Includes both endpoints and the commits between them." }
         }
-        if let RevisionQuery::Only { ids } = value {
-            details { class: "picker",
-                summary { "{ids.len()} selected revisions" }
-                div { class: "picker-body",
-                    p { class: "muted", "Selection order determines the X axis." }
-                    div { class: "picker-list",
-                        for revision in &meta.revisions {
-                            label { class: "check-row",
-                                input {
-                                    r#type: "checkbox",
-                                    checked: ids.contains(&revision.id),
-                                    onchange: {
+        if let RevisionQuery::Only { ids } = &value {
+            div { class: "commit-picker",
+                input { r#type: "search", aria_label: "Search commits", placeholder: "Search hash, message or author", value: query(), oninput: move |event| query.set(event.value()) }
+                div { class: "picker-actions",
+                    button { r#type: "button", onclick: { let ids = meta.revisions.iter().map(|r| r.id.clone()).collect::<Vec<_>>(); move |_| on_change.call(RevisionQuery::Only { ids: ids.clone() }) }, "Select all" }
+                    button { r#type: "button", onclick: move |_| on_change.call(RevisionQuery::Only { ids: vec![] }), "Clear" }
+                    span { class: "muted", "{ids.len()} selected" }
+                }
+                div { class: "picker-list commit-list",
+                    for revision in meta.revisions.iter().filter(|r| format!("{} {} {}", r.id, r.message, r.author).to_lowercase().contains(&search)) {
+                        label { class: "check-row", title: format!("{} · {}\n{}", revision.author, timestamp(revision.committed_at.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64), revision.message),
+                            input {
+                                r#type: "checkbox", aria_label: "Include commit {short(&revision.id)}", checked: ids.contains(&revision.id),
+                                onchange: { let meta = meta.clone(); let ids = ids.clone(); let id = revision.id.clone(); move |_| {
+                                    let next = if custom_order {
                                         let mut next = ids.clone();
-                                        let id = revision.id.clone();
-                                        move |_| {
-                                            if next.contains(&id) {
-                                                next.retain(|v| v != &id);
-                                            } else {
-                                                next.push(id.clone());
-                                            }
-                                            on_change
-                                                .call(RevisionQuery::Only {
-                                                    ids: next.clone(),
-                                                });
-                                        }
-                                    },
-                                }
-                                span {
-                                    "{short(&revision.id)}"
-                                    small { "{revision.message.lines().next().unwrap_or_default()}" }
-                                }
+                                        if next.contains(&id) { next.retain(|v| v != &id); } else { next.push(id.clone()); }
+                                        next
+                                    } else { toggle_commit(&meta, &ids, &id) };
+                                    on_change.call(RevisionQuery::Only { ids: next });
+                                } },
                             }
+                            span { code { "{short(&revision.id)}" } small { "{revision.message.lines().next().unwrap_or_default()}" } }
                         }
                     }
+                }
+                p { class: "muted",
+                    if custom_order { "Selection order determines the X axis." }
+                    else if custom_selection { "Custom order is selected in Advanced options." }
+                    else { "Shown in recorded commit order." }
                 }
             }
         }
@@ -1270,7 +1371,7 @@ fn AdvancedControls(meta: Metadata, plan: AnalysisPlan, on_edit: EventHandler<Ed
     }
 }
 #[component]
-fn PlotControls(
+fn AdvancedPlotControls(
     plot: PlotOptions,
     operation: Operation,
     on_change: EventHandler<PlotOptions>,
@@ -1279,8 +1380,6 @@ fn PlotControls(
     let min = plot.clone();
     let max = plot.clone();
     let lines = plot.clone();
-    let spread = plot.clone();
-    let range = plot.clone();
     rsx! {
         Choice {
             label: "Y scale",
@@ -1299,19 +1398,14 @@ fn PlotControls(
                 }
             },
         }
-        if matches!(operation, Operation::History | Operation::Scaling { .. } | Operation::Variation { .. }) {
-            if !matches!(operation, Operation::Variation { .. }) {
-                p { class: "muted", "Spread uses repetitions of one input within one run. Select one input or split series by Input identity." }
+        if matches!(operation, Operation::History | Operation::Variation { .. } | Operation::Scaling { .. }) {
+            Toggle {
+                label: "Standard deviation (±1 SD)", value: plot.show_spread,
+                on_change: { let plot = plot.clone(); move |show_spread| on_change.call(PlotOptions { show_spread, ..plot.clone() }) },
             }
             Toggle {
-                label: "Show mean ± 1 sample SD",
-                value: plot.show_spread,
-                on_change: move |show_spread| on_change.call(PlotOptions { show_spread, ..spread.clone() }),
-            }
-            Toggle {
-                label: "Show min–max whiskers",
-                value: plot.show_range,
-                on_change: move |show_range| on_change.call(PlotOptions { show_range, ..range.clone() }),
+                label: "Range (min–max)", value: plot.show_range,
+                on_change: { let plot = plot.clone(); move |show_range| on_change.call(PlotOptions { show_range, ..plot.clone() }) },
             }
         }
         details { class: "more-options",

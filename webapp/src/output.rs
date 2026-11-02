@@ -34,7 +34,11 @@ pub fn AnalysisOutput(
             matches!(
                 r.snapshot.plan.operation,
                 Operation::History | Operation::Scaling { .. } | Operation::Variation { .. }
-            )
+            ) && (matches!(r.snapshot.plan.operation, Operation::Variation { .. })
+                || r.series
+                    .iter()
+                    .flat_map(|s| &s.points)
+                    .any(|p| p.coverage.selected_inputs == 1))
         });
     let available_spread =
         spec.as_ref().is_some_and(|chart| {
@@ -64,43 +68,42 @@ pub fn AnalysisOutput(
     });
     rsx! {section{class:"chart-card",
         if let Some(r)=&result{
-            header{class:"chart-heading",h2{"{title(&r.snapshot.plan.operation)}"}p{class:"muted","{r.inputs.len()} selected inputs · {r.revisions.len()} revisions · {r.selected_runs.len()} source runs · workload v{version(r.definition.version)}"}}
+            header{class:"chart-heading",h2{"{title(&r.snapshot.plan.operation)}"}p{class:"muted","{r.inputs.len()} inputs · {r.revisions.len()} commits"}}
             for warning in &r.warnings{p{class:"notice",role:"status","{warning}"}}
             if let Some(reason)=plot.bounds_error(){p{class:"notice",role:"status","{reason} Bounds are ignored until corrected."}}
             if plot.y_scale==AxisScale::Log&&nonpositive>0{p{class:"notice",role:"status","{nonpositive} zero or negative values cannot be drawn on a logarithmic axis. They remain in the analysis."}}
             if empty{p{class:"notice",role:"status","No usable estimates for this selection. Inspect coverage and gaps below."}}
             if spread_enabled && available_spread {
-                p { class:"notice",
-                    "Spread across {spread_label}. "
-                    if plot.show_range { "Thin whiskers: min–max. " }
-                    if plot.show_spread { "Thick bars: mean ± 1 sample SD. " }
-                    "The line remains the selected estimate. These describe spread, not a confidence interval."
+                p { class: "chart-help", title: format!("Population: {spread_label}. These bars describe observed variability, not a confidence interval."),
+                    if plot.show_range { "Thin bars: min–max. " }
+                    if plot.show_spread { "Thick bars: mean ± 1 SD. " }
+                    "Hover for values; click a point for the input and commit details."
                 }
                 if plot.y_scale == AxisScale::Log {
                     p {class:"muted", "Spread bars with zero or negative endpoints are omitted on the logarithmic axis."}
                 }
             }
             if spread_enabled && !available_spread {
-                    p { class:"notice",role:"status",
+                    p { class:"chart-help",role:"status",
                         if !Reduction::estimates().contains(&r.snapshot.plan.inputs) && r.snapshot.plan.inputs != Reduction::GeometricMean {
-                            "Spread bars require an input estimator such as Mean. The current reduction plots a different quantity."
+                            "Custom averaging is active. Choose Mean in Advanced options to show repeat variability."
                         } else if matches!(r.snapshot.plan.operation, Operation::Variation { .. }) {
-                            "Spread needs at least two valid values in the selected population."
+                            "At least two measurements are needed to show variability."
                         } else if r.series.iter().flat_map(|s| &s.points).any(|p| p.coverage.selected_inputs > 1) {
                             "Combined input estimates have no spread bars. Select one input or split series by Input identity to show repetitions of the same input. Workload spread is available under Variation → Across inputs."
                         } else if metric(&meta, &r.snapshot.plan).is_some_and(|m| matches!(m.source, MetricSource::Formula { stage: FormulaStage::Input | FormulaStage::Suite, .. })) {
-                            "This metric is calculated after averaging. Repetition min–max and SD are unavailable. Select a runtime metric measured per repetition."
+                            "This metric combines averages, so repeat variability is unavailable. Runtime metrics have individual measurements."
                         } else if r.snapshot.plan.normalization.is_some() {
                             "Normalized estimates do not expose repetition spread. Disable normalization to inspect raw repetition variability."
                         } else if r.series.iter().flat_map(|s| &s.points).any(|p| p.coverage.runs > 1) || matches!(r.snapshot.plan.runs, Some(RunTreatment::Summaries { .. })) {
                             "Repetition bars use one run at a time. Separate runs to show their repetitions, or use Variation → Between runs."
                         } else {
-                            "Spread needs at least two valid repetitions of the same input and revision within one run."
+                            "At least two successful repeats are needed to show min–max and standard deviation."
                         }
                     }
             }
             if matches!(r.snapshot.plan.operation,Operation::Coverage){p{class:"notice","One slot is an input at a revision in one environment/configuration. Differing selected-run states are marked mixed. The table retains individual run and attempt counts."}}
-        }else{p{class:"chart-placeholder",role:"status",if loading{"Loading analysis..."}else{"Choose a valid selection and update analysis."}}}
+        }else{p{class:"chart-placeholder",role:"status",if loading{"Loading analysis..."}else{"Choose a metric, inputs and commits, then update the chart."}}}
         PlotlyChart{chart:spec,options:plot,on_point:on_select}
         if let Some(r)=result{ResultsTable{key:"{r.id}",result:r,meta:meta.clone(),on_select,on_page}}
     }}

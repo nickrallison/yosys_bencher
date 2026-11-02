@@ -118,7 +118,7 @@ fn Workspace(
     rsx! {
         main { class:"workspace",
             header { class:"page-heading",
-                div {h1 {"Results"} p {class:"muted","Performance across revisions"}}
+                div {h1 {"Results"} p {class:"muted","Performance across commits"}}
                 div {class:"controls",
                     controls::Choice {
                         label:"Experiment",
@@ -190,7 +190,7 @@ fn LoadedWorkspace(meta: api::Metadata, epoch: u64, on_refresh: EventHandler<()>
         div { class: "experiment-summary",
             span { "{d.experiment.spec.description}" }
             span { class: "muted",
-                "{d.experiment.successful_attempts} successful attempts · {d.experiment.measured_revisions} measured revisions"
+                "{d.experiment.successful_attempts} successful measurements · {d.experiment.measured_revisions} commits"
             }
             details {
                 summary { "Experiment details" }
@@ -204,31 +204,6 @@ fn LoadedWorkspace(meta: api::Metadata, epoch: u64, on_refresh: EventHandler<()>
                     dt { "Procedure" }
                     dd { "{d.experiment.contract.procedure}" }
                 }
-            }
-            controls::Choice {
-                label: "Workload version",
-                value: draft().selection.version.map(version)
-                        .unwrap_or_default(),
-                options: d.versions
-                    .iter()
-                    .map(|v| (
-                        version(v.version),
-                        format!(
-                            "v{} · {} inputs · {} successful attempts",
-                            version(v.version),
-                            v.input_count,
-                            v.successful_attempts,
-                        ),
-                    ))
-                    .collect(),
-                on_change: {
-                    let versions = d.versions.clone();
-                    move |v: String| {
-                        if let Some(def) = versions.iter().find(|d| version(d.version) == v) {
-                            edit.call(controls::Edit::Version(def.version));
-                        }
-                    }
-                },
             }
         }
         for warning in &meta.warnings {
@@ -255,10 +230,10 @@ fn LoadedWorkspace(meta: api::Metadata, epoch: u64, on_refresh: EventHandler<()>
                 class: "analysis-output",
                 aria_label: "Analysis results",
                 aria_busy: loading,
-                nav { class: "recipe", aria_label: "Current analysis recipe", "{recipe(&applied())}" }
+                nav { class: "recipe", aria_label: "Current chart selection", "{view_summary(&applied())}" }
                 if pending {
                     p { class: "notice compact", role: "status",
-                        "Controls have changed. Update analysis to apply them."
+                        "Selection changed. Update chart to apply it."
                     }
                 }
                 if let Some(error) = error {
@@ -287,6 +262,13 @@ fn LoadedWorkspace(meta: api::Metadata, epoch: u64, on_refresh: EventHandler<()>
                         applied.set(p);
                         selected_row.set(None);
                     },
+                }
+                details { class: "more-options calculation-details",
+                    summary { "Calculation details" }
+                    if let Some(result) = &response {
+                        p { class: "muted", "Workload v{version(result.definition.version)} · {result.selected_runs.len()} recorded runs" }
+                    }
+                    p { class: "muted", "{recipe(&applied())}" }
                 }
                 if let (Some(response), Some(row)) = (response, selected_row()) {
                     inspection::Inspector {

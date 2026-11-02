@@ -5,18 +5,31 @@ const theme = getComputedStyle(document.documentElement);
 const formatNumber = value => Number.isFinite(value) ? String(Number(value.toPrecision(5))) : "unavailable";
 const escapeText = value => String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
+function tooltipText(value, width = 52) {
+  return String(value ?? "").split("\n").flatMap(line => {
+    const chars = Array.from(line), lines = [];
+    while (chars.length > width) {
+      let end = Math.max(chars.lastIndexOf(" ", width), chars.lastIndexOf(",", width - 1) + 1);
+      if (end < width / 2) end = width;
+      lines.push(chars.splice(0, end).join(""));
+      while (chars[0] === " ") chars.shift();
+    }
+    lines.push(chars.join(""));
+    return lines;
+  }).map(escapeText).join("<br>");
+}
+
 function makeTraces(chart, options) {
   return chart.series.flatMap((series, index) => {
     const color = colors[index % colors.length];
     const visible = value => Number.isFinite(value) && (options.y_scale !== "log" || value > 0);
     const spreads = series.points.map(point => point.y == null ? null : point.spread);
-    const population = chart.spread_population || "repetitions of one input within one run";
     const customdata = series.points.map((point, i) => {
       const spread = spreads[i];
       const details = (options.show_spread || options.show_range) && spread
-        ? ` · ${population}: n=${spread.count}, mean=${formatNumber(spread.mean)}, min=${formatNumber(spread.min)}, max=${formatNumber(spread.max)}, sample SD=${formatNumber(spread.standard_deviation)}`
+        ? `\nMean: ${formatNumber(spread.mean)} · Min: ${formatNumber(spread.min)} · Max: ${formatNumber(spread.max)}\nSD: ${formatNumber(spread.standard_deviation)} · ${spread.count} measurements`
         : "";
-      return [point.row, escapeText((point.hover || "") + details)];
+      return [point.row, tooltipText((point.hover || "") + details), tooltipText(series.label)];
     });
     const traces = [];
     function whiskers(kind) {
@@ -59,7 +72,11 @@ function makeTraces(chart, options) {
       y: series.points.map(point => visible(point.y) ? point.y : null),
       customdata,
       marker: { color, size: 7 }, line: { color, width: 2 },
-      hovertemplate: "%{customdata[1]}<br>%{y}<extra>%{fullData.name}</extra>"
+      hoverlabel: {
+        bgcolor: "#ffffff", bordercolor: color, align: "left",
+        font: { family: theme.fontFamily, size: 12, color: theme.getPropertyValue("--ink").trim() }
+      },
+      hovertemplate: "<b>%{customdata[2]}</b><br>Value: %{y:.5g}<br>%{customdata[1]}<extra></extra>"
     });
     return traces;
   });

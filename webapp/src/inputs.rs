@@ -69,9 +69,9 @@ pub fn InputPicker(
                 label: "Inputs",
                 value: selected_mode,
                 options: vec![
-                    ("all".into(), "All target inputs".into()),
-                    ("ids".into(), "Choose individual inputs".into()),
-                    ("matching".into(), "Match search and parameters".into()),
+                    ("all".into(), "All inputs".into()),
+                    ("ids".into(), "Choose inputs".into()),
+                    ("matching".into(), "Filter inputs…".into()),
                 ],
                 on_change: mode,
             }
@@ -119,7 +119,7 @@ pub fn InputPicker(
                     },
                 }
             }
-            details { class: "picker",
+            details { class: "picker", open: selected_mode != "all",
                 summary {
                     match &current {
                         Some(Ok(p)) => rsx! { "{p.selected} of {p.target} inputs selected" },
@@ -140,7 +140,7 @@ pub fn InputPicker(
                     div { class: "picker-actions",
                         button { onclick: move | _ | on_edit
                                     .call(Edit::Inputs(InputSelection::All)),
-                            "All target inputs"
+                            "All inputs"
                         }
                         button { onclick: move |_| on_edit.call(Edit::Inputs(InputSelection::Ids { ids: vec![] })),
                             "None"

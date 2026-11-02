@@ -45,7 +45,7 @@ pub fn mode(op: &Operation) -> &'static str {
 }
 pub fn title(op: &Operation) -> &'static str {
     match op {
-        Operation::History => "History",
+        Operation::History => "Performance by commit",
         Operation::Changes { .. } => "Changes",
         Operation::Scaling { .. } => "Scaling",
         Operation::Variation { .. } => "Variation",
@@ -79,11 +79,90 @@ pub fn initial(meta: &Metadata) -> AnalysisPlan {
         d.default_metric.clone().unwrap_or_default(),
     );
     plan.selection.version = d.versions.last().map(|v| v.version);
+    plan.series = vec![Dimension::Input];
     if let Some(m) = metric(meta, &plan) {
         plan.repetitions = m.default_repetitions;
         plan.inputs = m.default_inputs;
     }
     plan
+}
+
+pub fn line_view(plan: &AnalysisPlan) -> &'static str {
+    if plan.repetitions != Reduction::Mean || plan.inputs != Reduction::Mean {
+        "custom"
+    } else if plan.series == [Dimension::Input] {
+        "inputs"
+    } else if plan.series.is_empty() {
+        "suite"
+    } else {
+        "custom"
+    }
+}
+
+pub fn advanced_active(plan: &AnalysisPlan) -> bool {
+    !matches!(plan.operation, Operation::History)
+        || line_view(plan) == "custom"
+        || plan.repetitions != Reduction::Mean
+        || plan.inputs != Reduction::Mean
+        || plan.coverage != CoveragePolicy::Strict
+        || plan.normalization.is_some()
+        || plan.cohort.is_some()
+        || !plan.filters.is_empty()
+        || !plan.display_filters.is_empty()
+        || !plan.selection.run_filters.is_empty()
+        || plan.selection.sources != VersionSources::CompatibleSupersets
+        || plan.selection.partitions != PartitionSelection::Automatic
+        || plan.selection.runs != RunSelection::LatestCompleted
+        || plan.runs.is_some()
+}
+
+pub fn toggle_commit(meta: &Metadata, selected: &[String], id: &str) -> Vec<String> {
+    let mut ids: BTreeSet<_> = selected.iter().map(String::as_str).collect();
+    if !ids.insert(id) {
+        ids.remove(id);
+    }
+    meta.revisions
+        .iter()
+        .filter(|r| ids.contains(r.id.as_str()))
+        .map(|r| r.id.clone())
+        .collect()
+}
+
+pub fn custom_commit_order(meta: &Metadata, query: &RevisionQuery) -> bool {
+    if let RevisionQuery::Only { ids } = query {
+        let recorded: Vec<_> = meta
+            .revisions
+            .iter()
+            .filter(|r| ids.contains(&r.id))
+            .map(|r| r.id.clone())
+            .collect();
+        &recorded != ids
+    } else {
+        false
+    }
+}
+
+pub fn view_summary(plan: &AnalysisPlan) -> String {
+    let inputs = match &plan.selection.inputs {
+        InputSelection::All => "Whole suite".into(),
+        InputSelection::Ids { ids } => format!("{} selected inputs", ids.len()),
+        InputSelection::Matching { .. } => "Filtered inputs".into(),
+    };
+    let commits = match &plan.selection.revisions {
+        RevisionQuery::All => "All commits".into(),
+        RevisionQuery::Range { .. } => "Commit range".into(),
+        RevisionQuery::Only { ids } => format!("{} selected commits", ids.len()),
+    };
+    let display = if !matches!(plan.operation, Operation::History) {
+        title(&plan.operation)
+    } else {
+        match line_view(plan) {
+            "inputs" => "One line per input",
+            "suite" => "Suite average",
+            _ => "Custom view",
+        }
+    };
+    format!("{inputs} · {display} · {commits}")
 }
 pub fn switch_mode(plan: &mut AnalysisPlan, value: &str, meta: &Metadata) -> Option<String> {
     plan.operation = match value {
@@ -220,8 +299,7 @@ pub fn ready(meta: &Metadata, plan: &AnalysisPlan) -> Option<String> {
         )
     {
         return Some(
-            "Recorded histories require an explicit order. Choose revisions and their order."
-                .into(),
+            "Choose commits to compare. Their order can be adjusted in Advanced options.".into(),
         );
     }
     if let Some(reason) = &meta.description.unsupported {
@@ -230,10 +308,16 @@ pub fn ready(meta: &Metadata, plan: &AnalysisPlan) -> Option<String> {
     if !matches!(plan.operation, Operation::Coverage) && plan.metric.is_none() {
         return Some("Select a metric.".into());
     }
+    if matches!(&plan.selection.inputs, InputSelection::Ids { ids } if ids.is_empty()) {
+        return Some("Choose at least one input.".into());
+    }
+    if matches!(&plan.selection.revisions, RevisionQuery::Only { ids } if ids.is_empty()) {
+        return Some("Choose at least one commit.".into());
+    }
     if partitions(meta, plan).len() > 1
         && matches!(plan.selection.partitions, PartitionSelection::Automatic)
     {
-        return Some("Choose an environment/configuration, or explicitly select all.".into());
+        return Some("Choose a run environment in Advanced options.".into());
     }
     if !matches!(plan.selection.runs, RunSelection::LatestCompleted)
         && plan.runs.is_none()
@@ -242,7 +326,7 @@ pub fn ready(meta: &Metadata, plan: &AnalysisPlan) -> Option<String> {
             Operation::Coverage | Operation::Variation { .. }
         )
     {
-        return Some("Choose how to treat the selected runs.".into());
+        return Some("Choose how to combine the selected runs in Advanced options.".into());
     }
     None
 }
@@ -365,7 +449,7 @@ impl Default for PlotOptions {
             y_max: None,
             show_reference_lines: true,
             show_spread: true,
-            show_range: false,
+            show_range: true,
         }
     }
 }
@@ -430,7 +514,7 @@ pub fn chart(result: &AnalysisResponse, meta: &Metadata) -> ChartSpec {
     let unit = result.unit.clone().unwrap_or_default();
     let mut chart = ChartSpec {
         id: result.id.clone(),
-        x_label: "Commit order".into(),
+        x_label: "Commit".into(),
         y_label: format!("{name} ({unit})"),
         x_type: "category".into(),
         x_values: result.revisions.iter().map(|r| json!(r)).collect(),
@@ -507,13 +591,31 @@ pub fn chart(result: &AnalysisResponse, meta: &Metadata) -> ChartSpec {
                             y: p.value,
                             spread: p.repetition_spread.clone(),
                             row: Some(p.id.clone()),
-                            hover: format!(
-                                "{} · {} / {} inputs · {} valid repetitions",
-                                p.x,
-                                p.coverage.included_inputs,
-                                p.coverage.selected_inputs,
-                                p.coverage.valid_repetitions,
-                            ),
+                            hover: {
+                                let revision = p
+                                    .details
+                                    .get("revision")
+                                    .map(String::as_str)
+                                    .unwrap_or_default();
+                                let message = meta
+                                    .revisions
+                                    .iter()
+                                    .find(|r| r.id == revision)
+                                    .and_then(|r| r.message.lines().next())
+                                    .unwrap_or_default();
+                                let x = if let Operation::Scaling { x, .. } = &plan.operation {
+                                    format!("{}: {}\n", label(x), value_text(&p.x))
+                                } else {
+                                    String::new()
+                                };
+                                format!(
+                                    "{x}{} {}\n{} inputs · {} measurements",
+                                    short(revision),
+                                    message,
+                                    p.coverage.included_inputs,
+                                    p.coverage.valid_repetitions
+                                )
+                            },
                         })
                         .collect(),
                 });

@@ -191,3 +191,20 @@ button:disabled { opacity:.5; cursor:default; }
 .metric-unit { flex:none; color:var(--muted); font-size:10px; font-weight:400; }
 .metric-selected-label { color:var(--blue); font-size:10px; }
 .metric-chevron { flex:none; width:6px; height:6px; border-top:1px solid var(--muted); border-right:1px solid var(--muted); transform:rotate(45deg); margin-right:3px; }
+
+/* Keep the everyday workflow short; specialist controls remain available on demand. */
+.advanced-entry { background: var(--panel); }
+.advanced-toggle { display:flex; justify-content:space-between; align-items:center; gap:8px; width:100%; text-align:left; background:transparent; border:0; padding:0; min-height:28px; font-size:12px; font-weight:600; }
+.advanced-options { background:#fbfcfe; }
+.advanced-options .editor-section { padding-left:18px; padding-right:18px; }
+.advanced-options .editor-section h2 { font-size:12px; }
+.commit-picker > input { margin-bottom:4px; }
+.commit-picker .picker-actions { align-items:center; flex-wrap:wrap; }
+.commit-list { max-height:230px; }
+.commit-list code { font-size:11px; }
+.chart-help { margin:12px 24px 0; color:var(--muted); font-size:12px; line-height:1.5; }
+.calculation-details { margin-top:16px; }
+@media (max-width:760px) {
+  .advanced-options, .advanced-entry { grid-column:1/-1; }
+  .chart-help { margin-left:16px; margin-right:16px; }
+}

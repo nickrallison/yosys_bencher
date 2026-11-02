@@ -13,6 +13,7 @@ use yosys_bench::{
     tools::yosys::design::Design,
 };
 use yosys_bench_ui_types::experiment::*;
+use yosys_bench_ui_types::metrics::Reduction;
 fn dataset() -> (Backend, Metadata) {
     type P = YosysBenchmark<TimingProcedure>;
     let mut store = SqliteStore::in_memory().unwrap();
@@ -98,6 +99,8 @@ fn defaults_and_mode_changes_preserve_dataset_choices() {
     let (_, meta) = dataset();
     let mut plan = initial(&meta);
     assert_eq!(plan.metric.as_deref(), Some("runtime"));
+    assert_eq!(line_view(&plan), "inputs");
+    assert!(!advanced_active(&plan));
     plan.selection.revisions = RevisionQuery::Only {
         ids: vec!["cccc3333".into(), "aaaa1111".into()],
     };
@@ -123,6 +126,68 @@ fn defaults_and_mode_changes_preserve_dataset_choices() {
     assert!(plan.normalization.is_none());
     assert!(plan.filters.is_empty());
 }
+
+#[test]
+fn simple_line_choices_and_advanced_reset_preserve_the_dataset() {
+    use crate::controls::{Edit, apply};
+    let (_, meta) = dataset();
+    let mut plan = initial(&meta);
+    plan.selection.inputs = InputSelection::Ids {
+        ids: vec![InputId(1)],
+    };
+    plan.selection.revisions = RevisionQuery::Only {
+        ids: vec!["aaaa1111".into(), "cccc3333".into()],
+    };
+    let selection = encoded(&plan.selection);
+    apply(&mut plan, Edit::View("suite".into()), &meta);
+    assert_eq!(line_view(&plan), "suite");
+    assert_eq!(plan.inputs, Reduction::Mean);
+    assert_eq!(encoded(&plan.selection), selection);
+    apply(&mut plan, Edit::View("inputs".into()), &meta);
+    assert_eq!(line_view(&plan), "inputs");
+    plan.inputs = Reduction::StdDev;
+    plan.repetitions = Reduction::Median;
+    plan.coverage = CoveragePolicy::Available;
+    plan.normalization = Some(Normalization {
+        revision: "aaaa1111".into(),
+        kind: ChangeKind::Ratio,
+        runs: None,
+    });
+    plan.series.push(Dimension::Run);
+    plan.runs = Some(RunTreatment::Separate);
+    assert!(advanced_active(&plan));
+    apply(&mut plan, Edit::ResetAdvanced, &meta);
+    assert_eq!(encoded(&plan.selection), selection);
+    assert_eq!(plan.metric.as_deref(), Some("runtime"));
+    assert_eq!(line_view(&plan), "inputs");
+    assert!(!advanced_active(&plan));
+    apply(&mut plan, Edit::View("suite".into()), &meta);
+    plan.inputs = Reduction::StdDev;
+    assert_eq!(line_view(&plan), "custom");
+    apply(&mut plan, Edit::ResetAdvanced, &meta);
+    assert_eq!(line_view(&plan), "suite");
+}
+
+#[test]
+fn choosing_commits_keeps_recorded_order_instead_of_click_order() {
+    let (_, meta) = dataset();
+    let selected = toggle_commit(&meta, &[], "cccc3333");
+    let selected = toggle_commit(&meta, &selected, "aaaa1111");
+    assert_eq!(selected, ["aaaa1111", "cccc3333"]);
+    assert!(!custom_commit_order(
+        &meta,
+        &RevisionQuery::Only {
+            ids: selected.clone()
+        }
+    ));
+    assert!(custom_commit_order(
+        &meta,
+        &RevisionQuery::Only {
+            ids: vec!["cccc3333".into(), "aaaa1111".into()]
+        }
+    ));
+    assert_eq!(toggle_commit(&meta, &selected, "aaaa1111"), ["cccc3333"]);
+}
 #[test]
 fn charts_use_stable_inspection_ids_and_numeric_scaling_axes() {
     let (backend, meta) = dataset();
@@ -137,8 +202,10 @@ fn charts_use_stable_inspection_ids_and_numeric_scaling_axes() {
         x: "design".into(),
         reduce_remaining: true,
     };
-    for (i, p) in result.series[0].points.iter_mut().enumerate() {
-        p.x = json!((i + 1) * 16);
+    for series in &mut result.series {
+        for (i, point) in series.points.iter_mut().enumerate() {
+            point.x = json!((i + 1) * 16);
+        }
     }
     let spec = chart(&result, &meta);
     assert_eq!(spec.x_type, "linear");
@@ -149,6 +216,7 @@ fn charts_use_stable_inspection_ids_and_numeric_scaling_axes() {
 fn history_spread_requires_one_input_and_variation_retains_workload_spread() {
     let (backend, meta) = dataset();
     let mut plan = initial(&meta);
+    plan.series.clear();
     let result = backend.analyze(&plan).unwrap();
     let spec = chart(&result, &meta);
     let point = &spec.series[0].points[0];
@@ -164,7 +232,7 @@ fn history_spread_requires_one_input_and_variation_retains_workload_spread() {
     );
     dom.rebuild_in_place();
     let html = dioxus::ssr::render(&dom);
-    assert!(html.contains("Combined input estimates have no spread bars."));
+    assert!(html.contains("One line averages the selected inputs."));
     assert!(!html.contains("Spread across input estimates"));
 
     plan.series = vec![Dimension::Input];
@@ -289,6 +357,113 @@ fn view(props: ViewProps) -> Element {
         }
     }
 }
+
+struct TestView {
+    dom: VirtualDom,
+    buttons: std::collections::BTreeMap<String, dioxus::dioxus_core::ElementId>,
+}
+impl TestView {
+    fn new(props: ViewProps) -> Self {
+        set_event_converter(Box::new(dioxus::html::SerializedHtmlEventConverter));
+        let mut ui = Self {
+            dom: VirtualDom::new_with_props(view, props),
+            buttons: Default::default(),
+        };
+        let edits = ui.dom.rebuild_to_vec();
+        ui.update(edits);
+        ui
+    }
+    fn update(&mut self, edits: dioxus::dioxus_core::Mutations) {
+        use dioxus::dioxus_core::{AttributeValue, Mutation};
+        for edit in edits.edits {
+            if let Mutation::SetAttribute {
+                name: "aria-expanded",
+                id,
+                ..
+            } = &edit
+            {
+                self.buttons.insert("Advanced options".into(), *id);
+            }
+            if let Mutation::SetAttribute {
+                name: "aria-label",
+                value: AttributeValue::Text(value),
+                id,
+                ..
+            } = edit
+            {
+                self.buttons.insert(value, id);
+            }
+        }
+    }
+    fn click(&mut self, name: &str) {
+        use std::{any::Any, rc::Rc};
+        let id = *self
+            .buttons
+            .get(name)
+            .unwrap_or_else(|| panic!("No button: {name}"));
+        let event = Event::new(
+            Rc::new(PlatformEventData::new(Box::<SerializedMouseData>::default())) as Rc<dyn Any>,
+            true,
+        );
+        self.dom.runtime().handle_event("click", event, id);
+        let edits = self.dom.render_immediate_to_vec();
+        self.update(edits);
+    }
+    fn html(&self) -> String {
+        dioxus::ssr::render(&self.dom)
+    }
+}
+
+#[test]
+fn default_interface_is_small_and_specialist_controls_remain_available() {
+    let (backend, meta) = dataset();
+    let plan = initial(&meta);
+    let result = backend.analyze(&plan).unwrap();
+    let mut ui = TestView::new(ViewProps { meta, plan, result });
+    let simple = ui.html();
+    for label in [
+        "Metric",
+        "Inputs",
+        "Commit selection",
+        "One line per input",
+        "Suite average",
+        "Standard deviation",
+        "Range (min–max)",
+        "Update chart",
+    ] {
+        assert!(simple.contains(label), "Missing primary control: {label}");
+    }
+    for label in [
+        "Workload version",
+        "Version sources",
+        "Coverage policy",
+        "Filters and change cohorts",
+        "Custom grouping and averages",
+        "Custom commit order",
+    ] {
+        assert!(
+            !simple.contains(label),
+            "Advanced control leaked into basic view: {label}"
+        );
+    }
+    ui.click("Advanced options");
+    let advanced = ui.html();
+    for label in [
+        "Workload version",
+        "Version sources",
+        "Coverage policy",
+        "Filters and change cohorts",
+        "Custom grouping and averages",
+        "Custom commit order",
+    ] {
+        assert!(
+            advanced.contains(label),
+            "Advanced control was lost: {label}"
+        );
+    }
+    ui.click("Advanced options");
+    assert!(!ui.html().contains("Coverage policy"));
+}
 #[test]
 fn all_five_modes_render_their_controls_and_result_tables() {
     let (backend, meta) = dataset();
@@ -302,18 +477,15 @@ fn all_five_modes_render_their_controls_and_result_tables() {
         let mut plan = initial(&meta);
         switch_mode(&mut plan, mode, &meta);
         let result = backend.analyze(&plan).unwrap();
-        let mut dom = VirtualDom::new_with_props(
-            view,
-            ViewProps {
-                meta: meta.clone(),
-                plan,
-                result,
-            },
-        );
-        dom.rebuild_in_place();
-        let html = dioxus::ssr::render(&dom);
+        let mut ui = TestView::new(ViewProps {
+            meta: meta.clone(),
+            plan,
+            result,
+        });
+        ui.click("Advanced options");
+        let html = ui.html();
         assert!(html.contains(expected), "Missing {expected} in {mode}");
-        assert!(html.contains("Update analysis"));
+        assert!(html.contains("Update chart"));
         assert!(html.contains("analysis-plot"));
     }
 }

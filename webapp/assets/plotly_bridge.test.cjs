@@ -50,7 +50,7 @@ test('min-max and one SD are separate bars while the selected estimate stays unc
   assert.ok(range.error_y.thickness < sd.error_y.thickness);
   assert.equal(range.legendgroup, line.legendgroup);
   assert.equal(sd.showlegend, false);
-  assert.match(line.customdata[0][1], /repetitions of one input within one run: n=3, mean=10, min=2, max=18, sample SD=3/);
+  assert.match(line.customdata[0][1], /Mean: 10 · Min: 2 · Max: 18<br>SD: 3 · 3 measurements/);
   const hidden = await render(chart, { show_range: false, show_spread: false });
   assert.equal(hidden.traces.length, 1);
   assert.deepEqual(hidden.traces[0].y, [12]);
@@ -65,7 +65,32 @@ test('combined history has no spread and workload variation is explicit', async 
   chart.series[0].points[0].spread = { count: 3, mean: 10, min: 2, max: 18, standard_deviation: 3 };
   const variation = await render(chart);
   assert.deepEqual(variation.traces[0].error_y.array, [3]);
-  assert.match(variation.traces[1].customdata[0][1], /across inputs: n=3/);
+  assert.match(variation.traces[1].customdata[0][1], /3 measurements/);
+});
+
+test('hover uses one neutral card and wraps long labels without losing inspection IDs', async () => {
+  const chart = spec([{ x: 8, y: 2, row: 'record-a', hover: '70bf41c29b ' + 'A long commit message '.repeat(8) }]);
+  chart.series[0].label = 'input: 32-bit [-44666, 4693, -1249, -16947, 819, 33704, 123456789, 987654321]';
+  const result = await render(chart, {}, ['record-a', 'details']);
+  const trace = result.traces[0];
+  assert.equal(trace.hoverlabel.bgcolor, '#ffffff');
+  assert.equal(trace.hoverlabel.font.color, '#202936');
+  assert.equal(trace.hoverlabel.bordercolor, trace.line.color);
+  assert.match(trace.hovertemplate, /<b>%\{customdata\[2\]\}<\/b>/);
+  assert.ok(trace.hovertemplate.endsWith('<extra></extra>'));
+  for (const text of trace.customdata[0].slice(1)) {
+    assert.ok(text.includes('<br>'));
+    assert.ok(text.split('<br>').every(line => Array.from(line).length <= 52));
+  }
+  assert.deepEqual(result.messages, [{ row_id: 'record-a' }]);
+});
+
+test('input names and commit messages remain escaped inside the hover card', async () => {
+  const chart = spec([{ x: 8, y: 2, row: 'a', hover: '<script>alert(1)</script>\nA & B' }]);
+  chart.series[0].label = '<img src=x onerror=alert(1)>';
+  const result = await render(chart);
+  assert.equal(result.traces[0].customdata[0][2], '&lt;img src=x onerror=alert(1)&gt;');
+  assert.equal(result.traces[0].customdata[0][1], '&lt;script&gt;alert(1)&lt;/script&gt;<br>A &amp; B');
 });
 
 test('insufficient samples, missing points, and invalid log intervals do not invent bars', async () => {

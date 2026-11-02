@@ -25,18 +25,40 @@ The webapp has its own Cargo workspace and lockfile. Build both targets with
 
 ## Workspace
 
-Choose an experiment and workload version above the workspace. The sidebar starts
-with the analysis mode and metric, followed by shared data and run controls:
+The default workflow is intentionally small:
 
-- History: revisions, grouping, reductions, and optional per-input normalization.
-- Changes: adjacent revisions, previous measured revisions, or an explicit pair;
-  practical thresholds, rankings, and matched suite summaries.
-- Scaling: a declared input parameter on the X axis, with explicit handling of
-  other varying parameters.
-- Variation: within-run repetitions, between-run estimates, or workload spread;
-  counts, quantiles, and descriptive sample SD.
-- Coverage: execution states and optional metric availability against the selected
-  workload, including failed builds and unfinished work.
+1. Choose a metric.
+2. Use the whole suite or select inputs.
+3. Compare all recorded commits, an inclusive commit range, or selected commits.
+4. Choose **One line per input** or **Suite average**.
+5. Click **Update chart**.
+
+Each input starts with a mean line plus standard deviation and min–max bars from
+its repeated measurements. The two bar types can be switched off independently.
+**Suite average** combines the selected inputs into one mean line; it does not
+mix different inputs into repeat-variability bars. Hover gives the commit message
+and numeric values; click a point for full input, commit, measurement, and artifact
+details. Commit search matches hashes, messages, and authors. The basic picker
+keeps recorded commit order regardless of checkbox click order.
+
+**Advanced options** is closed by default and rendered only when opened. It
+retains the less-used controls rather than deleting or commenting out their
+implementations. They are intentionally out of the everyday path: most users want
+to find a regression and its affected inputs without choosing statistical policies.
+An **Active** badge identifies nondefault analysis settings. **Reset advanced
+analysis** restores the usual means, full input coverage, and latest completed
+measurements while keeping the metric, selected inputs, commits, and workload
+version.
+
+Advanced options contains workload versions and version sources, explicit runs
+and environments, normalization, custom grouping and reducers, coverage policies,
+filters, cohorts, custom commit order, and axis settings. Other analysis views are
+also retained there:
+
+- Changes: compare commits, thresholds, and per-input regressions.
+- Scaling: plot a declared input parameter on the X axis.
+- Variation: examine repeats, different runs, or differences between inputs.
+- Coverage: inspect failed, missing, unsupported, and unfinished measurements.
 
 The metric picker shows derived measurements first, followed by submeasurement
 groups. Open a group to see its immediate children; **Back** moves up one level
@@ -63,23 +85,24 @@ explicit order. Environment/configuration partitions stay separate; selecting
 multiple runs requires a deliberate treatment. Group previews show cardinality
 before analysis is applied.
 
-Controls edit a draft. **Update analysis** applies it; the recipe and results
+Controls edit a draft. **Update chart** applies it; the recipe and results
 continue to describe the applied plan until then. Plot presentation changes apply
 immediately. Refresh reloads discovery and analysis after a runner writes data.
 
 History and Scaling keep the selected estimate as the line. Spread bars use only
 repeated measurements of the same input at the same revision within one run.
-Select one input or split series by **Input identity**; combined-input lines have
+Select one input or choose **One line per input**; combined-input lines have
 no spread bars. Use **Variation → Across inputs** to inspect workload differences,
 or **Variation → Between runs** to inspect differences between runs. Variation
-uses its explicitly selected population. Under **Plot**, **Show mean ± 1 sample SD** adds thick bars around the population mean;
-**Show min–max whiskers** adds thin whiskers at the observed extremes. Both can be
+uses its explicitly selected population. **Standard deviation (±1 SD)** adds thick
+bars around the population mean; **Range (min–max)** adds thin whiskers at the
+observed extremes. Both can be
 enabled together or hidden without changing the estimate. Hover shows the count,
 mean, minimum, maximum, and SD. These are descriptive ranges, not confidence intervals.
 
-**Inputs → Sample standard deviation** still plots SD across inputs itself. Its
-**Use mean** shortcut changes Inputs to Mean; apply that analysis
-change with **Update analysis**. Missing observations are excluded from spread,
+The advanced **Custom grouping and averages → Inputs → Sample standard deviation**
+reduction still plots SD across inputs itself. Its **Use mean** shortcut restores
+the mean; apply that analysis change with **Update chart**. Missing observations are excluded from spread,
 and bars need at least two valid values. Repetition spread is unavailable for
 normalized values, pooled runs, run-summary reductions, and formulas calculated after averaging.
 On logarithmic axes, intervals with nonpositive endpoints are omitted.
