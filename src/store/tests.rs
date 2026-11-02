@@ -3,6 +3,8 @@ use crate::{analysis::*, experiment::*, metrics::*};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 
+mod spread;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct Input(u32);
 impl BenchmarkIn for Input {

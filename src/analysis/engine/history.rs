@@ -1,5 +1,15 @@
 use super::*;
 
+fn spread(values: &[f64]) -> Option<Spread> {
+    Some(Spread {
+        count: values.len(),
+        mean: Reduction::Mean.apply(values)?,
+        standard_deviation: Reduction::StdDev.apply(values),
+        min: Reduction::Min.apply(values)?,
+        max: Reduction::Max.apply(values)?,
+    })
+}
+
 pub(super) fn membership(
     group: &Group,
     revisions: &[String],
@@ -36,6 +46,7 @@ pub(super) fn point(
     let mut planned_repetitions = 0;
     let mut runs = BTreeSet::new();
     let mut contributors = Vec::new();
+    let mut repeated = Vec::new();
     for &input in &group.inputs {
         let datum = data.get(&(group.partition.clone(), revision.into(), input, group.run));
         if let Some(d) = datum {
@@ -55,6 +66,30 @@ pub(super) fn point(
                 values.push(&d.estimate);
                 valid_repetitions += d.estimate.valid_repetitions;
                 runs.extend(d.estimate.run_ids.iter().copied());
+                if group.inputs.len() == 1
+                    && d.estimate.run_ids.len() == 1
+                    && plan.normalization.is_none()
+                    && !matches!(plan.runs, Some(RunTreatment::Summaries { .. }))
+                    && matches!(
+                        metric.source,
+                        MetricSource::Path
+                            | MetricSource::Formula {
+                                stage: FormulaStage::Repetition,
+                                ..
+                            }
+                    )
+                {
+                    let mut seen = BTreeSet::new();
+                    repeated.extend(
+                        d.samples
+                            .iter()
+                            .filter(|s| {
+                                s.observation.reason.is_none()
+                                    && seen.insert(s.observation.identities.clone())
+                            })
+                            .filter_map(|s| s.observation.value),
+                    );
+                }
             }
             Some(d) => exclusions.push(Exclusion {
                 input,
@@ -73,6 +108,8 @@ pub(super) fn point(
         aggregate(&values, metric, plan.inputs)
     };
     let mut details = BTreeMap::new();
+    let supports_spread =
+        Reduction::estimates().contains(&plan.inputs) || plan.inputs == Reduction::GeometricMean;
     details.insert("revision".into(), revision.into());
     if value.is_none()
         && !values.is_empty()
@@ -84,6 +121,11 @@ pub(super) fn point(
         id: id(&(&group.id, revision)),
         x: json!(revision),
         value,
+        repetition_spread: if value.is_some() && supports_spread {
+            spread(&repeated)
+        } else {
+            None
+        },
         coverage: Coverage {
             selected_inputs: group.inputs.len(),
             eligible_inputs: eligible.len(),

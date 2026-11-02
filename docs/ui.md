@@ -67,6 +67,23 @@ Controls edit a draft. **Update analysis** applies it; the recipe and results
 continue to describe the applied plan until then. Plot presentation changes apply
 immediately. Refresh reloads discovery and analysis after a runner writes data.
 
+History and Scaling keep the selected estimate as the line. Spread bars use only
+repeated measurements of the same input at the same revision within one run.
+Select one input or split series by **Input identity**; combined-input lines have
+no spread bars. Use **Variation → Across inputs** to inspect workload differences,
+or **Variation → Between runs** to inspect differences between runs. Variation
+uses its explicitly selected population. Under **Plot**, **Show mean ± 1 sample SD** adds thick bars around the population mean;
+**Show min–max whiskers** adds thin whiskers at the observed extremes. Both can be
+enabled together or hidden without changing the estimate. Hover shows the count,
+mean, minimum, maximum, and SD. These are descriptive ranges, not confidence intervals.
+
+**Inputs → Sample standard deviation** still plots SD across inputs itself. Its
+**Use mean** shortcut changes Inputs to Mean; apply that analysis
+change with **Update analysis**. Missing observations are excluded from spread,
+and bars need at least two valid values. Repetition spread is unavailable for
+normalized values, pooled runs, run-summary reductions, and formulas calculated after averaging.
+On logarithmic axes, intervals with nonpositive endpoints are omitted.
+
 Select a chart point or a table's Inspect button to see contributing estimates,
 raw observations, attempts, diagnostics, run configuration, and retained artifacts.
 Artifact names are direct links that open in a new tab. SVG flamegraphs render

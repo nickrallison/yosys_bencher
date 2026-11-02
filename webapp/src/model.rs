@@ -354,6 +354,8 @@ pub struct PlotOptions {
     pub y_max: Option<f64>,
     pub show_reference_lines: bool,
     pub show_spread: bool,
+    #[serde(default)]
+    pub show_range: bool,
 }
 impl Default for PlotOptions {
     fn default() -> Self {
@@ -363,6 +365,7 @@ impl Default for PlotOptions {
             y_max: None,
             show_reference_lines: true,
             show_spread: true,
+            show_range: false,
         }
     }
 }
@@ -396,6 +399,7 @@ pub struct ChartSpec {
     pub x_labels: Vec<String>,
     pub barmode: String,
     pub reference_lines: Vec<ReferenceLine>,
+    pub spread_population: Option<String>,
     pub series: Vec<ChartSeries>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -414,7 +418,7 @@ pub struct ChartSeries {
 pub struct ChartPoint {
     pub x: Value,
     pub y: Option<f64>,
-    pub sd: Option<f64>,
+    pub spread: Option<Spread>,
     pub row: Option<String>,
     pub hover: String,
 }
@@ -432,6 +436,15 @@ pub fn chart(result: &AnalysisResponse, meta: &Metadata) -> ChartSpec {
         x_values: result.revisions.iter().map(|r| json!(r)).collect(),
         x_labels: result.revisions.iter().map(|r| short(r)).collect(),
         barmode: "group".into(),
+        spread_population: match &plan.operation {
+            Operation::Variation { population } => {
+                Some(population_label(*population).to_lowercase())
+            }
+            Operation::History | Operation::Scaling { .. } => {
+                Some("repetitions of one input within one run".into())
+            }
+            _ => None,
+        },
         reference_lines: result
             .reference
             .map(|value| ReferenceLine {
@@ -471,6 +484,14 @@ pub fn chart(result: &AnalysisResponse, meta: &Metadata) -> ChartSpec {
             .map(|i| i.label.clone())
             .unwrap_or_else(|| format!("Input {id}"))
     };
+    if plan.inputs == Reduction::StdDev
+        && matches!(
+            plan.operation,
+            Operation::History | Operation::Scaling { .. }
+        )
+    {
+        chart.y_label = format!("Input sample SD: {name} ({unit})");
+    }
     match &plan.operation {
         Operation::History | Operation::Scaling { .. } => {
             for s in &result.series {
@@ -484,7 +505,7 @@ pub fn chart(result: &AnalysisResponse, meta: &Metadata) -> ChartSpec {
                         .map(|p| ChartPoint {
                             x: p.x.clone(),
                             y: p.value,
-                            sd: None,
+                            spread: p.repetition_spread.clone(),
                             row: Some(p.id.clone()),
                             hover: format!(
                                 "{} · {} / {} inputs · {} valid repetitions",
@@ -557,7 +578,7 @@ pub fn chart(result: &AnalysisResponse, meta: &Metadata) -> ChartSpec {
                             Ranking::Percent => r.percent,
                             Ranking::Contribution => r.contribution,
                         },
-                        sd: None,
+                        spread: None,
                         row: Some(r.id.clone()),
                         hover: format!(
                             "{} · {} → {} · {:?}",
@@ -571,7 +592,7 @@ pub fn chart(result: &AnalysisResponse, meta: &Metadata) -> ChartSpec {
             });
         }
         Operation::Variation { population } => {
-            chart.y_label = format!("Mean ± sample SD ({unit})");
+            chart.y_label = format!("Mean ({unit})");
             let mut series = BTreeMap::<String, ChartSeries>::new();
             for d in &result.distributions.items {
                 let key = encoded(&(d.input, &d.partition, d.run, &d.dimensions));
@@ -599,7 +620,17 @@ pub fn chart(result: &AnalysisResponse, meta: &Metadata) -> ChartSpec {
                 s.points.push(ChartPoint {
                     x: json!(d.revision),
                     y: d.mean,
-                    sd: d.standard_deviation,
+                    spread: d
+                        .mean
+                        .zip(d.min)
+                        .zip(d.max)
+                        .map(|((mean, min), max)| Spread {
+                            count: d.count,
+                            mean,
+                            min,
+                            max,
+                            standard_deviation: d.standard_deviation,
+                        }),
                     row: Some(d.id.clone()),
                     hover: format!("{} · n={} · {:?}", short(&d.revision), d.count, population,),
                 });
@@ -619,7 +650,7 @@ pub fn chart(result: &AnalysisResponse, meta: &Metadata) -> ChartSpec {
                             points.get(r).cloned().unwrap_or_else(|| ChartPoint {
                                 x: json!(r),
                                 y: None,
-                                sd: None,
+                                spread: None,
                                 row: None,
                                 hover: "No estimate at this revision".into(),
                             })
@@ -665,7 +696,7 @@ pub fn chart(result: &AnalysisResponse, meta: &Metadata) -> ChartSpec {
                         .map(|r| ChartPoint {
                             x: json!(r),
                             y: Some(*counts.get(r).unwrap_or(&0) as f64),
-                            sd: None,
+                            spread: None,
                             row: None,
                             hover: format!(
                                 "{} · {state} · inspect individual rows below",

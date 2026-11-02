@@ -2,23 +2,67 @@ const host = document.getElementById("analysis-plot");
 const colors = ["#4b72b8", "#d6368f", "#31508a", "#9c286a", "#819ed0", "#ea91c2"];
 const theme = getComputedStyle(document.documentElement);
 
+const formatNumber = value => Number.isFinite(value) ? String(Number(value.toPrecision(5))) : "unavailable";
+const escapeText = value => String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 function makeTraces(chart, options) {
-  return chart.series.map((series, index) => ({
-    uid: series.id,
-    name: series.label,
-    type: series.kind || "scatter",
-    mode: "lines+markers",
-    connectgaps: false,
-    x: series.points.map(point => point.x),
-    // Keep point indices and original Rust values intact when a log axis
-    // cannot display a measurement. The Dioxus view reports these omissions.
-    y: series.points.map(point => options.y_scale === "log" && point.y <= 0 ? null : point.y),
-    customdata: series.points.map(point => [point.row, String(point.hover || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")]),
-    error_y: options.show_spread ? { type: "data", array: series.points.map(point => point.sd), visible: true } : undefined,
-    marker: { color: colors[index % colors.length], size: 7 },
-    line: { color: colors[index % colors.length], width: 2 },
-    hovertemplate: "%{customdata[1]}<br>%{y}<extra>%{fullData.name}</extra>"
-  }));
+  return chart.series.flatMap((series, index) => {
+    const color = colors[index % colors.length];
+    const visible = value => Number.isFinite(value) && (options.y_scale !== "log" || value > 0);
+    const spreads = series.points.map(point => point.y == null ? null : point.spread);
+    const population = chart.spread_population || "repetitions of one input within one run";
+    const customdata = series.points.map((point, i) => {
+      const spread = spreads[i];
+      const details = (options.show_spread || options.show_range) && spread
+        ? ` · ${population}: n=${spread.count}, mean=${formatNumber(spread.mean)}, min=${formatNumber(spread.min)}, max=${formatNumber(spread.max)}, sample SD=${formatNumber(spread.standard_deviation)}`
+        : "";
+      return [point.row, escapeText((point.hover || "") + details)];
+    });
+    const traces = [];
+    function whiskers(kind) {
+      const intervals = spreads.map((spread, i) => {
+        if (!spread || spread.count < 2 || !visible(series.points[i].y)) return null;
+        const lower = kind === "range" ? spread.min : spread.mean - spread.standard_deviation;
+        const upper = kind === "range" ? spread.max : spread.mean + spread.standard_deviation;
+        if (kind === "sd" && !Number.isFinite(spread.standard_deviation)) return null;
+        if (!visible(lower) || !visible(upper)) return null;
+        const center = kind === "range" ? lower / 2 + upper / 2 : spread.mean;
+        const plus = kind === "sd" ? spread.standard_deviation : upper - center;
+        const minus = kind === "sd" ? spread.standard_deviation : center - lower;
+        return Number.isFinite(plus) && Number.isFinite(minus) ? { center, plus, minus } : null;
+      });
+      if (!intervals.some(Boolean)) return;
+      traces.push({
+        uid: `${series.id}-${kind}`, name: series.label, legendgroup: series.id,
+        type: "scatter", mode: "markers", showlegend: false, hoverinfo: "skip",
+        x: series.points.map(point => point.x), y: intervals.map(value => value?.center ?? null),
+        customdata,
+        marker: { color, size: 0, opacity: 0 },
+        opacity: kind === "range" ? 0.4 : 0.8,
+        error_y: {
+          type: "data", symmetric: false, visible: true, color,
+          array: intervals.map(value => value?.plus ?? null),
+          arrayminus: intervals.map(value => value?.minus ?? null),
+          thickness: kind === "range" ? 1 : 3, width: kind === "range" ? 7 : 4
+        }
+      });
+    }
+    if (series.kind !== "bar") {
+      if (options.show_range) whiskers("range");
+      if (options.show_spread) whiskers("sd");
+    }
+    traces.push({
+      uid: series.id, name: series.label, legendgroup: series.id,
+      type: series.kind || "scatter", mode: "lines+markers", connectgaps: false,
+      x: series.points.map(point => point.x),
+      // Keep point indices and original Rust values intact on logarithmic axes.
+      y: series.points.map(point => visible(point.y) ? point.y : null),
+      customdata,
+      marker: { color, size: 7 }, line: { color, width: 2 },
+      hovertemplate: "%{customdata[1]}<br>%{y}<extra>%{fullData.name}</extra>"
+    });
+    return traces;
+  });
 }
 
 function makeLayout(chart, options) {

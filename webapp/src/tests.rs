@@ -144,6 +144,60 @@ fn charts_use_stable_inspection_ids_and_numeric_scaling_axes() {
     assert_eq!(spec.x_type, "linear");
     assert_eq!(spec.series[0].points[0].x, json!(16));
 }
+
+#[test]
+fn history_spread_requires_one_input_and_variation_retains_workload_spread() {
+    let (backend, meta) = dataset();
+    let mut plan = initial(&meta);
+    let result = backend.analyze(&plan).unwrap();
+    let spec = chart(&result, &meta);
+    let point = &spec.series[0].points[0];
+    assert_eq!(point.y, result.series[0].points[0].value);
+    assert!(point.spread.is_none());
+    let mut dom = VirtualDom::new_with_props(
+        view,
+        ViewProps {
+            meta: meta.clone(),
+            plan: plan.clone(),
+            result: result.clone(),
+        },
+    );
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+    assert!(html.contains("Combined input estimates have no spread bars."));
+    assert!(!html.contains("Spread across input estimates"));
+
+    plan.series = vec![Dimension::Input];
+    let result = backend.analyze(&plan).unwrap();
+    let spec = chart(&result, &meta);
+    assert!(
+        spec.spread_population
+            .as_ref()
+            .unwrap()
+            .contains("within one run")
+    );
+    for series in &spec.series {
+        let point = &series.points[0];
+        let repetitions = point.spread.as_ref().unwrap();
+        assert_eq!(repetitions.count, 2);
+        assert!((repetitions.standard_deviation.unwrap() - 0.1 / 2_f64.sqrt()).abs() < 1e-12);
+        assert_eq!(point.y, Some(repetitions.mean));
+    }
+
+    plan.series.clear();
+    plan.operation = Operation::Variation {
+        population: Population::AcrossInputs,
+    };
+    let result = backend.analyze(&plan).unwrap();
+    let spec = chart(&result, &meta);
+    assert!(spec.spread_population.as_ref().unwrap().contains("input"));
+    assert!(
+        spec.series
+            .iter()
+            .flat_map(|s| &s.points)
+            .all(|p| p.spread.as_ref().is_some_and(|spread| spread.count == 2))
+    );
+}
 #[test]
 fn chart_legends_use_input_labels_and_keep_input_ids_for_grouping() {
     let (backend, meta) = dataset();

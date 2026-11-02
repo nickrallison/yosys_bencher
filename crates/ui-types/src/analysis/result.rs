@@ -32,9 +32,20 @@ pub struct Point {
     pub id: String,
     pub x: Value,
     pub value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repetition_spread: Option<Spread>,
     pub coverage: Coverage,
     pub contributors: Vec<String>,
     pub details: BTreeMap<String, String>,
+}
+/// Descriptive spread of a named population, independent of the plotted estimator.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Spread {
+    pub count: usize,
+    pub mean: f64,
+    pub standard_deviation: Option<f64>,
+    pub min: f64,
+    pub max: f64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Series {

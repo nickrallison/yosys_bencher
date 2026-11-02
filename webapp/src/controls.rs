@@ -272,6 +272,16 @@ pub fn Sidebar(
                                 on_change: move |r| on_edit.call(Edit::InputReduction(r)),
                             }
                         }
+                        if plan.inputs == Reduction::StdDev {
+                            p { class: "muted", "This plots differences between inputs as the value. Use Mean for the central estimate." }
+                            button {
+                                r#type: "button",
+                                onclick: move |_| {
+                                    on_edit.call(Edit::InputReduction(Reduction::Mean));
+                                },
+                                "Use mean"
+                            }
+                        }
                         if let MetricSource::Formula { numerator, denominator, stage, .. } = &m.source {
                             p { class: "muted",
                                 "Formula operands: {label(numerator)} and {label(denominator)}. "
@@ -323,7 +333,7 @@ pub fn Sidebar(
             }
             section { class: "editor-section", id: "plot-controls",
                 h2 { "Plot" }
-                PlotControls { plot, on_change: on_plot }
+                PlotControls { plot, operation: plan.operation.clone(), on_change: on_plot }
             }
             div { class: "apply-controls",
                 if let Some(field) = error_field {
@@ -1260,12 +1270,17 @@ fn AdvancedControls(meta: Metadata, plan: AnalysisPlan, on_edit: EventHandler<Ed
     }
 }
 #[component]
-fn PlotControls(plot: PlotOptions, on_change: EventHandler<PlotOptions>) -> Element {
+fn PlotControls(
+    plot: PlotOptions,
+    operation: Operation,
+    on_change: EventHandler<PlotOptions>,
+) -> Element {
     let scale = plot.clone();
     let min = plot.clone();
     let max = plot.clone();
     let lines = plot.clone();
     let spread = plot.clone();
+    let range = plot.clone();
     rsx! {
         Choice {
             label: "Y scale",
@@ -1283,6 +1298,21 @@ fn PlotControls(plot: PlotOptions, on_change: EventHandler<PlotOptions>) -> Elem
                         });
                 }
             },
+        }
+        if matches!(operation, Operation::History | Operation::Scaling { .. } | Operation::Variation { .. }) {
+            if !matches!(operation, Operation::Variation { .. }) {
+                p { class: "muted", "Spread uses repetitions of one input within one run. Select one input or split series by Input identity." }
+            }
+            Toggle {
+                label: "Show mean ± 1 sample SD",
+                value: plot.show_spread,
+                on_change: move |show_spread| on_change.call(PlotOptions { show_spread, ..spread.clone() }),
+            }
+            Toggle {
+                label: "Show min–max whiskers",
+                value: plot.show_range,
+                on_change: move |show_range| on_change.call(PlotOptions { show_range, ..range.clone() }),
+            }
         }
         details { class: "more-options",
             summary { "More plot options" }
@@ -1330,17 +1360,6 @@ fn PlotControls(plot: PlotOptions, on_change: EventHandler<PlotOptions>) -> Elem
                         .call(PlotOptions {
                             show_reference_lines: v,
                             ..lines.clone()
-                        })
-                },
-            }
-            Toggle {
-                label: "Show descriptive SD",
-                value: plot.show_spread,
-                on_change: move |v| {
-                    on_change
-                        .call(PlotOptions {
-                            show_spread: v,
-                            ..spread.clone()
                         })
                 },
             }
