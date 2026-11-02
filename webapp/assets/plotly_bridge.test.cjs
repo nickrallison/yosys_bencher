@@ -114,6 +114,42 @@ test('logarithmic omissions preserve positions and do not mutate analysis values
   assert.deepEqual(result.layout.yaxis.range, [0,2]);
   assert.equal(result.traces[0].customdata[0][1], '&lt;script&gt;bad&lt;/script&gt;');
 });
+
+test('scale changes reset the Y view without resetting commit zoom or changing measured values', async () => {
+  const chart = spec([
+    { x: 8, y: 0.6, row: 'a', spread: { count: 5, mean: 0.6, min: 0.5, max: 0.8, standard_deviation: 0.1 } },
+    { x: 16, y: 15, row: 'b', spread: { count: 5, mean: 15, min: 14.8, max: 15.2, standard_deviation: 0.1 } }
+  ]);
+  const linear = await render(chart, { y_scale: 'linear', show_range: true });
+  const log = await render(chart, { y_scale: 'log', show_range: true });
+  assert.notEqual(linear.layout.yaxis.uirevision, log.layout.yaxis.uirevision);
+  assert.equal(linear.layout.uirevision, log.layout.uirevision);
+  assert.equal(log.layout.yaxis.autorange, true);
+  assert.equal(log.layout.yaxis.range, undefined);
+  for (let i = 0; i < linear.traces.length; i++) {
+    assert.deepEqual(log.traces[i].y, linear.traces[i].y);
+    assert.deepEqual(log.traces[i].error_y, linear.traces[i].error_y);
+  }
+  const linearAgain = await render(chart, { y_scale: 'linear' });
+  assert.notEqual(log.layout.yaxis.uirevision, linearAgain.layout.yaxis.uirevision);
+});
+
+test('manual log bounds are transformed once and clearing them restores automatic bounds', async () => {
+  const chart = spec([{ x: 8, y: 2, row: 'a' }]);
+  const bounded = await render(chart, { y_scale: 'log', y_min: 0.1, y_max: 100 });
+  assert.deepEqual(bounded.layout.yaxis.range, [-1, 2]);
+  assert.equal(bounded.layout.yaxis.autorange, false);
+  const upper = await render(chart, { y_scale: 'log', y_max: 100 });
+  assert.deepEqual(upper.layout.yaxis.range, [null, 2]);
+  assert.equal(upper.layout.yaxis.autorange, 'min');
+  const lower = await render(chart, { y_scale: 'log', y_min: 0.1 });
+  assert.deepEqual(lower.layout.yaxis.range, [-1, null]);
+  assert.equal(lower.layout.yaxis.autorange, 'max');
+  const automatic = await render(chart, { y_scale: 'log' });
+  assert.notEqual(bounded.layout.yaxis.uirevision, automatic.layout.yaxis.uirevision);
+  assert.equal(automatic.layout.yaxis.autorange, true);
+  assert.equal(automatic.layout.yaxis.range, undefined);
+});
 test('coverage aggregate bars do not invent an inspection record', async () => {
   const chart = spec([{x:'revision',y:3,row:null,hover:'Measured'}]);
   chart.x_type = 'category'; chart.series[0].kind = 'bar'; chart.barmode = 'stack';

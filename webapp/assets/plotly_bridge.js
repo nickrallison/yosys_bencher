@@ -89,6 +89,7 @@ function makeLayout(chart, options) {
     : [];
   const bound = value => value == null ? null : options.y_scale === "log" ? Math.log10(value) : value;
   const range = options.y_min == null && options.y_max == null ? undefined : [bound(options.y_min), bound(options.y_max)];
+  const autorange = !range ? true : options.y_min == null ? "min" : options.y_max == null ? "max" : false;
   return {
     autosize: true,
     uirevision: chart.id,
@@ -113,8 +114,12 @@ function makeLayout(chart, options) {
     yaxis: {
       title: { text: chart.y_label },
       type: options.y_scale,
+      // Linear ranges are data values; log ranges are base-10 exponents.
+      // Do not retain a zoomed range across a scale or explicit-bound change.
+      // The root revision stays stable so commit-axis zoom and legend choices survive.
+      uirevision: JSON.stringify([chart.id, options.y_scale, options.y_min ?? null, options.y_max ?? null]),
       range,
-      autorange: range ? undefined : true,
+      autorange,
       gridcolor: theme.getPropertyValue("--grid").trim(),
       zerolinecolor: theme.getPropertyValue("--grid").trim(),
       automargin: true
