@@ -100,7 +100,7 @@ fn defaults_and_mode_changes_preserve_dataset_choices() {
     let mut plan = initial(&meta);
     assert_eq!(plan.metric.as_deref(), Some("runtime"));
     assert_eq!(line_view(&plan), "inputs");
-    assert!(!advanced_active(&plan));
+    assert!(!custom_settings(&plan));
     plan.selection.revisions = RevisionQuery::Only {
         ids: vec!["cccc3333".into(), "aaaa1111".into()],
     };
@@ -128,7 +128,7 @@ fn defaults_and_mode_changes_preserve_dataset_choices() {
 }
 
 #[test]
-fn simple_line_choices_and_advanced_reset_preserve_the_dataset() {
+fn simple_line_choices_and_settings_reset_preserve_the_dataset() {
     use crate::controls::{Edit, apply};
     let (_, meta) = dataset();
     let mut plan = initial(&meta);
@@ -155,16 +155,16 @@ fn simple_line_choices_and_advanced_reset_preserve_the_dataset() {
     });
     plan.series.push(Dimension::Run);
     plan.runs = Some(RunTreatment::Separate);
-    assert!(advanced_active(&plan));
-    apply(&mut plan, Edit::ResetAdvanced, &meta);
+    assert!(custom_settings(&plan));
+    apply(&mut plan, Edit::ResetSettings, &meta);
     assert_eq!(encoded(&plan.selection), selection);
     assert_eq!(plan.metric.as_deref(), Some("runtime"));
     assert_eq!(line_view(&plan), "inputs");
-    assert!(!advanced_active(&plan));
+    assert!(!custom_settings(&plan));
     apply(&mut plan, Edit::View("suite".into()), &meta);
     plan.inputs = Reduction::StdDev;
     assert_eq!(line_view(&plan), "custom");
-    apply(&mut plan, Edit::ResetAdvanced, &meta);
+    apply(&mut plan, Edit::ResetSettings, &meta);
     assert_eq!(line_view(&plan), "suite");
 }
 
@@ -360,54 +360,12 @@ fn view(props: ViewProps) -> Element {
 
 struct TestView {
     dom: VirtualDom,
-    buttons: std::collections::BTreeMap<String, dioxus::dioxus_core::ElementId>,
 }
 impl TestView {
     fn new(props: ViewProps) -> Self {
-        set_event_converter(Box::new(dioxus::html::SerializedHtmlEventConverter));
-        let mut ui = Self {
-            dom: VirtualDom::new_with_props(view, props),
-            buttons: Default::default(),
-        };
-        let edits = ui.dom.rebuild_to_vec();
-        ui.update(edits);
-        ui
-    }
-    fn update(&mut self, edits: dioxus::dioxus_core::Mutations) {
-        use dioxus::dioxus_core::{AttributeValue, Mutation};
-        for edit in edits.edits {
-            if let Mutation::SetAttribute {
-                name: "aria-expanded",
-                id,
-                ..
-            } = &edit
-            {
-                self.buttons.insert("Advanced options".into(), *id);
-            }
-            if let Mutation::SetAttribute {
-                name: "aria-label",
-                value: AttributeValue::Text(value),
-                id,
-                ..
-            } = edit
-            {
-                self.buttons.insert(value, id);
-            }
-        }
-    }
-    fn click(&mut self, name: &str) {
-        use std::{any::Any, rc::Rc};
-        let id = *self
-            .buttons
-            .get(name)
-            .unwrap_or_else(|| panic!("No button: {name}"));
-        let event = Event::new(
-            Rc::new(PlatformEventData::new(Box::<SerializedMouseData>::default())) as Rc<dyn Any>,
-            true,
-        );
-        self.dom.runtime().handle_event("click", event, id);
-        let edits = self.dom.render_immediate_to_vec();
-        self.update(edits);
+        let mut dom = VirtualDom::new_with_props(view, props);
+        dom.rebuild_to_vec();
+        Self { dom }
     }
     fn html(&self) -> String {
         dioxus::ssr::render(&self.dom)
@@ -415,12 +373,14 @@ impl TestView {
 }
 
 #[test]
-fn default_interface_is_small_and_specialist_controls_remain_available() {
+fn history_settings_are_inline_and_axes_come_last() {
     let (backend, meta) = dataset();
     let plan = initial(&meta);
+    assert_eq!(plan.selection.runs, RunSelection::LatestCompleted);
     let result = backend.analyze(&plan).unwrap();
-    let mut ui = TestView::new(ViewProps { meta, plan, result });
-    let simple = ui.html();
+    let ui = TestView::new(ViewProps { meta, plan, result });
+    let rendered = ui.html();
+    let html = rendered.split("</aside>").next().unwrap();
     for label in [
         "Metric",
         "Inputs",
@@ -429,75 +389,83 @@ fn default_interface_is_small_and_specialist_controls_remain_available() {
         "Suite average",
         "Standard deviation",
         "Range (min–max)",
+        "Axes and reference lines",
+        "Y scale",
+        "Show reference lines",
         "Update chart",
-    ] {
-        assert!(simple.contains(label), "Missing primary control: {label}");
-    }
-    for label in [
         "Workload version",
         "Version sources",
-        "Coverage policy",
-        "Filters and change cohorts",
-        "Custom grouping and averages",
+        "Missing results",
+        "When an input has no result",
+        "Show change relative to a commit",
         "Custom commit order",
     ] {
-        assert!(
-            !simple.contains(label),
-            "Advanced control leaked into basic view: {label}"
-        );
+        assert!(html.contains(label), "Missing chart control: {label}");
     }
-    ui.click("Advanced options");
-    let advanced = ui.html();
+    let axes = html.find("id=\"plot-controls\"").unwrap();
+    assert!(axes > html.find("id=\"coverage-controls\"").unwrap());
+    assert!(axes > html.find("id=\"version-controls\"").unwrap());
+    assert!(axes < html.find("class=\"apply-controls\"").unwrap());
+    assert_eq!(html.matches("id=\"plot-controls\"").count(), 1);
     for label in [
-        "Workload version",
-        "Version sources",
-        "Coverage policy",
-        "Filters and change cohorts",
+        "Advanced options",
+        "advanced-options",
+        "<h2>Measurements</h2>",
+        "Latest completed work item",
+        "run-controls",
+        "environment-controls",
+        "Other analysis views",
+        "Run selection",
+        "Measurement environment",
+        "Configuration details",
+        "Run metadata filters",
         "Custom grouping and averages",
-        "Custom commit order",
+        "Filters and change cohorts",
+        "Coverage policy",
     ] {
-        assert!(
-            advanced.contains(label),
-            "Advanced control was lost: {label}"
-        );
+        assert!(!html.contains(label), "Removed UI returned: {label}");
     }
-    ui.click("Advanced options");
-    assert!(!ui.html().contains("Coverage policy"));
 }
 #[test]
-fn all_five_modes_render_their_controls_and_result_tables() {
+fn shelved_modes_still_support_analysis_and_charts() {
     let (backend, meta) = dataset();
-    for (mode, expected) in [
-        ("history", "Normalize to a revision"),
-        ("changes", "Practical threshold"),
-        ("scaling", "X parameter"),
-        ("variation", "Variation population"),
-        ("coverage", "Execution and metric coverage"),
-    ] {
+    for mode in ["history", "changes", "scaling", "variation", "coverage"] {
         let mut plan = initial(&meta);
         switch_mode(&mut plan, mode, &meta);
         let result = backend.analyze(&plan).unwrap();
-        let mut ui = TestView::new(ViewProps {
-            meta: meta.clone(),
-            plan,
-            result,
-        });
-        ui.click("Advanced options");
-        let html = ui.html();
-        assert!(html.contains(expected), "Missing {expected} in {mode}");
-        assert!(html.contains("Update chart"));
-        assert!(html.contains("analysis-plot"));
+        assert!(
+            !chart(&result, &meta).series.is_empty(),
+            "No chart for {mode}"
+        );
     }
 }
 #[test]
 fn run_filters_are_used_when_checking_automatic_environment_selection() {
-    let (_, mut meta) = dataset();
+    use crate::controls::{Edit, apply};
+    let (backend, mut meta) = dataset();
+    let result = backend.analyze(&initial(&meta)).unwrap();
     let mut other = meta.runs[0].clone();
     other.partition = "other".into();
     other.environment.machine = "other-machine".into();
     meta.runs.push(other);
     let mut plan = initial(&meta);
     assert!(ready(&meta, &plan).is_some());
+    let ui = TestView::new(ViewProps {
+        meta: meta.clone(),
+        plan: plan.clone(),
+        result,
+    });
+    assert!(ui.html().contains("Measurement environment"));
+    assert!(!ui.html().contains("All configurations, separate series"));
+    apply(
+        &mut plan,
+        Edit::Partitions(PartitionSelection::Only {
+            ids: vec!["other".into()],
+        }),
+        &meta,
+    );
+    assert!(ready(&meta, &plan).is_none());
+    plan.selection.partitions = PartitionSelection::Automatic;
     plan.selection.run_filters = vec![Filter {
         field: "environment.machine".into(),
         operator: FilterOperator::Equal,

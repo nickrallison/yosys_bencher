@@ -287,4 +287,6 @@ fn LoadedWorkspace(meta: api::Metadata, epoch: u64, on_refresh: EventHandler<()>
     }
 }
 #[cfg(all(test, feature = "server"))]
+mod profile;
+#[cfg(all(test, feature = "server"))]
 mod tests;

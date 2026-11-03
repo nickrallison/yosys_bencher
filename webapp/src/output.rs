@@ -86,7 +86,7 @@ pub fn AnalysisOutput(
             if spread_enabled && !available_spread {
                     p { class:"chart-help",role:"status",
                         if !Reduction::estimates().contains(&r.snapshot.plan.inputs) && r.snapshot.plan.inputs != Reduction::GeometricMean {
-                            "Custom averaging is active. Choose Mean in Advanced options to show repeat variability."
+                            "Custom averaging is active. Choose One line per input to use means and show repeat variability."
                         } else if matches!(r.snapshot.plan.operation, Operation::Variation { .. }) {
                             "At least two measurements are needed to show variability."
                         } else if r.series.iter().flat_map(|s| &s.points).any(|p| p.coverage.selected_inputs > 1) {

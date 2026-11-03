@@ -34,15 +34,6 @@ pub fn number(value: Option<f64>) -> String {
 pub fn version(v: Version) -> String {
     format!("{}.{}", v.major(), v.minor())
 }
-pub fn mode(op: &Operation) -> &'static str {
-    match op {
-        Operation::History => "history",
-        Operation::Changes { .. } => "changes",
-        Operation::Scaling { .. } => "scaling",
-        Operation::Variation { .. } => "variation",
-        Operation::Coverage => "coverage",
-    }
-}
 pub fn title(op: &Operation) -> &'static str {
     match op {
         Operation::History => "Performance by commit",
@@ -99,7 +90,7 @@ pub fn line_view(plan: &AnalysisPlan) -> &'static str {
     }
 }
 
-pub fn advanced_active(plan: &AnalysisPlan) -> bool {
+pub fn custom_settings(plan: &AnalysisPlan) -> bool {
     !matches!(plan.operation, Operation::History)
         || line_view(plan) == "custom"
         || plan.repetitions != Reduction::Mean
@@ -164,6 +155,7 @@ pub fn view_summary(plan: &AnalysisPlan) -> String {
     };
     format!("{inputs} · {display} · {commits}")
 }
+#[cfg(test)]
 pub fn switch_mode(plan: &mut AnalysisPlan, value: &str, meta: &Metadata) -> Option<String> {
     plan.operation = match value {
         "changes" => Operation::Changes {
@@ -299,7 +291,8 @@ pub fn ready(meta: &Metadata, plan: &AnalysisPlan) -> Option<String> {
         )
     {
         return Some(
-            "Choose commits to compare. Their order can be adjusted in Advanced options.".into(),
+            "Choose commits to compare. Their order can be adjusted under Custom commit order."
+                .into(),
         );
     }
     if let Some(reason) = &meta.description.unsupported {
@@ -317,7 +310,7 @@ pub fn ready(meta: &Metadata, plan: &AnalysisPlan) -> Option<String> {
     if partitions(meta, plan).len() > 1
         && matches!(plan.selection.partitions, PartitionSelection::Automatic)
     {
-        return Some("Choose a run environment in Advanced options.".into());
+        return Some("Choose a measurement environment in the chart settings. Results from different machines or configurations are kept separate.".into());
     }
     if !matches!(plan.selection.runs, RunSelection::LatestCompleted)
         && plan.runs.is_none()
@@ -326,7 +319,7 @@ pub fn ready(meta: &Metadata, plan: &AnalysisPlan) -> Option<String> {
             Operation::Coverage | Operation::Variation { .. }
         )
     {
-        return Some("Choose how to combine the selected runs in Advanced options.".into());
+        return Some("This run selection needs a combination policy. Reset analysis settings to use the latest completed measurements.".into());
     }
     None
 }
