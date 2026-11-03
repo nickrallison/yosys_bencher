@@ -53,6 +53,10 @@ pub fn describe(descriptors: &[MetricDescriptor]) -> Vec<MetricSpec> {
     out
 }
 pub fn scalar(output: &impl crate::experiment::BenchmarkOut, path: &str) -> Option<f64> {
+    output.get_scalar(path).filter(|v| v.is_finite())
+}
+/// Compatibility fallback for outputs without direct scalar access.
+pub fn scalar_from_group(output: &impl crate::experiment::BenchmarkOut, path: &str) -> Option<f64> {
     let mut parts = path.split('.');
     let mut value = output.get_metric(parts.next()?)?;
     for part in parts {
@@ -75,12 +79,20 @@ pub fn scalar(output: &impl crate::experiment::BenchmarkOut, path: &str) -> Opti
 /// Expand named-record metric maps using keys actually present in an output.
 /// Ordinary descriptors keep the procedure's declared analysis metadata.
 pub fn describe_dynamic(descriptors: &[MetricDescriptor], value: &MetricValue) -> Vec<MetricSpec> {
+    describe_new(descriptors, value, &mut std::collections::BTreeSet::new())
+}
+pub(crate) fn describe_new(
+    descriptors: &[MetricDescriptor],
+    value: &MetricValue,
+    known: &mut std::collections::BTreeSet<String>,
+) -> Vec<MetricSpec> {
     fn visit(
         out: &mut Vec<MetricSpec>,
         prefix: &str,
         descriptors: &[MetricDescriptor],
         value: &MetricValue,
         dynamic: bool,
+        known: &mut std::collections::BTreeSet<String>,
     ) {
         let MetricValue::Group(values) = value else {
             return;
@@ -95,7 +107,7 @@ pub fn describe_dynamic(descriptors: &[MetricDescriptor], value: &MetricValue) -
                 format!("{prefix}.{}", descriptor.name())
             };
             match descriptor {
-                MetricDescriptor::Value { .. } if dynamic => {
+                MetricDescriptor::Value { .. } if dynamic && known.insert(path.clone()) => {
                     out.extend(
                         describe(std::slice::from_ref(descriptor))
                             .into_iter()
@@ -103,17 +115,24 @@ pub fn describe_dynamic(descriptors: &[MetricDescriptor], value: &MetricValue) -
                     );
                 }
                 MetricDescriptor::Group { children, .. } => {
-                    visit(out, &path, children, value, dynamic)
+                    visit(out, &path, children, value, dynamic, known)
                 }
                 MetricDescriptor::Map { children, .. } => {
                     if let MetricValue::Group(records) = value {
                         for (name, record) in records {
-                            visit(out, &format!("{path}.{name}"), children, record, true);
+                            visit(
+                                out,
+                                &format!("{path}.{name}"),
+                                children,
+                                record,
+                                true,
+                                known,
+                            );
                         }
                     }
                 }
                 MetricDescriptor::Tree { children, .. } => {
-                    visit_tree(out, &path, children, value);
+                    visit_tree(out, &path, children, value, known);
                 }
                 _ => (),
             }
@@ -124,22 +143,29 @@ pub fn describe_dynamic(descriptors: &[MetricDescriptor], value: &MetricValue) -
         prefix: &str,
         descriptors: &[MetricDescriptor],
         value: &MetricValue,
+        known: &mut std::collections::BTreeSet<String>,
     ) {
         let MetricValue::OrderedGroup(nodes) = value else {
             return;
         };
         for (name, node) in nodes {
             let path = format!("{prefix}.{name}");
-            visit(out, &path, descriptors, node, true);
+            visit(out, &path, descriptors, node, true, known);
             if let MetricValue::Group(fields) = node
                 && let Some(children) = fields.get("children")
             {
-                visit_tree(out, &format!("{path}.children"), descriptors, children);
+                visit_tree(
+                    out,
+                    &format!("{path}.children"),
+                    descriptors,
+                    children,
+                    known,
+                );
             }
         }
     }
     let mut out = Vec::new();
-    visit(&mut out, "", descriptors, value, false);
+    visit(&mut out, "", descriptors, value, false, known);
     out
 }
 
@@ -148,12 +174,9 @@ pub fn catalog<'a, O: crate::experiment::BenchmarkOut + 'a>(
 ) -> Vec<MetricSpec> {
     let mut metrics = O::analysis_metrics();
     let mut known: std::collections::BTreeSet<_> = metrics.iter().map(|m| m.path.clone()).collect();
+    let descriptors = O::list_metrics();
     for output in outputs {
-        for metric in describe_dynamic(&O::list_metrics(), &output.metrics()) {
-            if known.insert(metric.path.clone()) {
-                metrics.push(metric);
-            }
-        }
+        metrics.extend(describe_new(&descriptors, &output.metrics(), &mut known));
     }
     metrics
 }

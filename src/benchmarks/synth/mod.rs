@@ -7,7 +7,11 @@ use crate::{
     tools::yosys::{Yosys, YosysJob, YosysRun, argument, design::SourceFile},
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::HashMap,
+    hash::{Hash, Hasher},
+    path::Path,
+};
 
 type Result<T> = std::result::Result<T, ExperimentError>;
 
@@ -23,7 +27,7 @@ impl TimingConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Getters)]
+#[derive(Debug, Clone, Serialize, Deserialize, Getters)]
 #[getset(get = "pub")]
 pub struct CellLibrary {
     liberty: String,
@@ -37,7 +41,48 @@ impl CellLibrary {
     }
 
     pub fn from_path(path: impl AsRef<Path>) -> std::io::Result<Self> {
-        Ok(Self::new(std::fs::read_to_string(path)?))
+        let path = path.as_ref();
+        let library = Self::new(std::fs::read_to_string(path)?);
+        if let Some(warning) = library.warning() {
+            eprintln!("Warning: {}: {warning}", path.display());
+        }
+        Ok(library)
+    }
+
+    /// The declared name identifies a library, including for benchmark input identity.
+    pub fn name(&self) -> Option<&str> {
+        // Allow copyright headers; the bundled Nangate declaration is on line 37.
+        self.liberty.lines().take(128).find_map(|line| {
+            let declaration = line.trim_start().strip_prefix("library")?.trim_start();
+            let (name, _) = declaration.strip_prefix('(')?.split_once(')')?;
+            let name = name.trim().trim_matches('"');
+            (!name.is_empty()).then_some(name)
+        })
+    }
+
+    fn identity(&self) -> (bool, &str) {
+        match self.name() {
+            Some(name) => (true, name),
+            // Keep malformed/unnamed inputs distinct without inventing a shared name.
+            None => (false, &self.liberty),
+        }
+    }
+    fn warning(&self) -> Option<&'static str> {
+        self.name()
+            .is_none()
+            .then_some("Cell library has no declared name; using its contents for input identity.")
+    }
+}
+
+impl PartialEq for CellLibrary {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity() == other.identity()
+    }
+}
+impl Eq for CellLibrary {}
+impl Hash for CellLibrary {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.identity().hash(state);
     }
 }
 
@@ -68,6 +113,20 @@ pub struct SynthMeasurements {
 
 #[contracts::contract_trait]
 impl crate::experiment::BenchmarkOut for SynthMeasurements {
+    fn observation_sources(&self) -> Option<Vec<(String, String)>> {
+        Some(vec![])
+    }
+    fn get_scalar(&self, path: &str) -> Option<f64> {
+        match path {
+            "area" => self.area,
+            "cell_count" => self
+                .cell_count
+                .values()
+                .try_fold(0_u64, |n, v| n.checked_add(*v))
+                .map(|v| v as f64),
+            _ => None,
+        }
+    }
     fn list_metrics() -> Vec<crate::metrics::MetricDescriptor> {
         use crate::metrics::{MetricDescriptor, MetricType};
         vec![
@@ -131,11 +190,18 @@ impl BenchmarkIn for TimingConfig {
     }
 }
 impl BenchmarkIn for SynthConfig {
+    fn warnings(&self) -> Vec<String> {
+        self.cell_lib
+            .warning()
+            .map(str::to_owned)
+            .into_iter()
+            .collect()
+    }
     fn fields() -> Vec<crate::experiment::InputField> {
         vec![
             crate::experiment::InputField::new(
                 "library",
-                "Cell library content hash",
+                "Cell library",
                 crate::experiment::FieldKind::Text,
             ),
             crate::experiment::InputField::new(
@@ -146,14 +212,10 @@ impl BenchmarkIn for SynthConfig {
         ]
     }
     fn parameters(&self) -> std::collections::BTreeMap<String, serde_json::Value> {
-        use sha2::{Digest, Sha256};
         [
             (
                 "library".into(),
-                serde_json::json!(format!(
-                    "{:x}",
-                    Sha256::digest(self.cell_lib.liberty.as_bytes())
-                )),
+                serde_json::json!(self.cell_lib.name().unwrap_or("Unnamed library")),
             ),
             (
                 "commands".into(),
@@ -316,3 +378,6 @@ impl Suite for SynthSuite {
 
 inventory::submit! { crate::analysis::AdapterRegistration::for_procedure::<YosysBenchmark<TimingProcedure>>() }
 inventory::submit! { crate::analysis::AdapterRegistration::for_procedure::<YosysBenchmark<SynthProcedure>>() }
+
+#[cfg(test)]
+mod tests;

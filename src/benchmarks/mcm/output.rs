@@ -81,9 +81,37 @@ impl McmOutput {
 
 #[contract_trait]
 impl BenchmarkOut for McmOutput {
-    fn observation_identity(&self, path: &str) -> Option<String> {
-        path.strip_prefix("reference.")
-            .map(|p| format!("reference:{}:{p}", self.reference.id))
+    fn get_scalar(&self, path: &str) -> Option<f64> {
+        if path == "area_savings" {
+            return self.area_savings();
+        }
+        let (flow, path) = path.split_once('.')?;
+        match flow {
+            "baseline" => match path.strip_prefix("synth.") {
+                Some(path) => self.baseline.measurements().get_scalar(path),
+                None => self.baseline.get_scalar(path),
+            },
+            "optimized" => {
+                if let Some(path) = path.strip_prefix("synth.") {
+                    self.optimized.measurements().synthesis.get_scalar(path)
+                } else if let Some(path) = path.strip_prefix("mcm_stats.") {
+                    self.optimized.measurements().optimization.get_scalar(path)
+                } else {
+                    self.optimized.get_scalar(path)
+                }
+            }
+            "reference" => match path.strip_prefix("mcm_stats.") {
+                Some(path) => self.reference.measurements.get_scalar(path),
+                None => self.reference.get_scalar(path),
+            },
+            _ => None,
+        }
+    }
+    fn observation_sources(&self) -> Option<Vec<(String, String)>> {
+        Some(vec![(
+            "reference.".into(),
+            format!("reference:{}:", self.reference.id),
+        )])
     }
 
     fn analysis_metrics() -> Vec<crate::metrics::MetricSpec> {

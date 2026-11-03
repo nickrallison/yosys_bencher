@@ -1,18 +1,33 @@
 mod error;
+mod projection;
 mod read;
 mod types;
 mod write;
 pub use error::{Result, StoreError};
+pub(crate) use projection::AnalysisFrame;
 use rusqlite::Connection;
 use serde::{Serialize, de::DeserializeOwned};
 use std::{
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 pub use types::*;
 
 pub struct SqliteStore {
     pub(crate) connection: Connection,
+    database: DatabaseId,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DatabaseId {
+    File(PathBuf),
+    Memory(u64),
+}
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct DatabaseRevision {
+    pub database: DatabaseId,
+    pub generation: i64,
+    file: Option<(u64, SystemTime, u64, u64)>,
 }
 impl SqliteStore {
     pub fn default_path() -> PathBuf {
@@ -25,7 +40,11 @@ impl SqliteStore {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)?;
         }
-        Self::from_connection(Connection::open(path)?)
+        let mut store = Self::from_connection(Connection::open(path)?)?;
+        if let Some(path) = store.connection.path().filter(|path| !path.is_empty()) {
+            store.database = DatabaseId::File(std::fs::canonicalize(path)?);
+        }
+        Ok(store)
     }
     pub fn in_memory() -> Result<Self> {
         Self::from_connection(Connection::open_in_memory()?)
@@ -33,14 +52,34 @@ impl SqliteStore {
     fn from_connection(connection: Connection) -> Result<Self> {
         connection.busy_timeout(Duration::from_secs(5))?;
         let version: u32 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 1 {
+        if version > 2 {
             return Err(StoreError::Unsupported(format!(
                 "database schema {version}"
             )));
         }
         connection.pragma_update(None, "journal_mode", "WAL")?;
-        connection.execute_batch(include_str!("schema.sql"))?;
-        Ok(Self { connection })
+        connection.pragma_update(None, "foreign_keys", true)?;
+        // Reapplying user_version rewrites the header even when its value is unchanged.
+        // Reads must not change the file revision used to validate shared caches.
+        if version < 2 {
+            let tx = rusqlite::Transaction::new_unchecked(
+                &connection,
+                rusqlite::TransactionBehavior::Immediate,
+            )?;
+            let current: u32 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
+            if current == 0 {
+                tx.execute_batch(include_str!("schema.sql"))?;
+            }
+            if current < 2 {
+                tx.execute_batch(include_str!("schema_v2.sql"))?;
+            }
+            tx.commit()?;
+        }
+        static NEXT_MEMORY_DATABASE: AtomicU64 = AtomicU64::new(0);
+        Ok(Self {
+            connection,
+            database: DatabaseId::Memory(NEXT_MEMORY_DATABASE.fetch_add(1, Ordering::Relaxed)),
+        })
     }
     pub fn generation(&self) -> Result<i64> {
         Ok(self
@@ -48,6 +87,27 @@ impl SqliteStore {
             .query_row("SELECT generation FROM metadata WHERE id=1", [], |r| {
                 r.get(0)
             })?)
+    }
+    pub(crate) fn database_revision(&self) -> Result<DatabaseRevision> {
+        let file = match &self.database {
+            DatabaseId::File(path) => {
+                let metadata = std::fs::metadata(path)?;
+                #[cfg(unix)]
+                let identity = {
+                    use std::os::unix::fs::MetadataExt;
+                    (metadata.dev(), metadata.ino())
+                };
+                #[cfg(not(unix))]
+                let identity = (0, 0);
+                Some((metadata.len(), metadata.modified()?, identity.0, identity.1))
+            }
+            DatabaseId::Memory(_) => None,
+        };
+        Ok(DatabaseRevision {
+            database: self.database.clone(),
+            generation: self.generation()?,
+            file,
+        })
     }
 }
 pub(crate) fn now() -> i64 {

@@ -182,7 +182,8 @@ recovery after a process exits unexpectedly.
 Analysis returns stable row/point identities and a snapshot containing its plan
 and database generation. Inspection uses that snapshot and the selected row ID.
 Any subsequent database write expires it; refresh analysis before inspecting it.
-This avoids keeping transactions or result caches alive between browser requests.
+Read transactions are short-lived. Shared result caches are bounded and invalidated
+when the database revision changes.
 
 Inspection provides estimates, raw observations, attempts, run configuration,
 diagnostics, and artifact IDs. Artifact paths stay on the server; fetch their
@@ -192,6 +193,27 @@ individual references report whether their files still exist.
 `StoreError` covers local errors. `ApiError::from(&error)` maps them to shared
 error values, including control-specific validation errors and expired snapshots,
 for the Dioxus server-function wrapper.
+
+## Analysis storage
+
+Schema 2 stores compact input descriptions, a metric catalog and numeric values
+alongside the original JSON. These projections are updated transactionally as
+measurements are recorded. Graphs read only the requested metric or formula
+operands; inspection retains the full raw records and diagnostics.
+
+Existing experiments are backfilled once on first use. Backfill is transactional
+and preserves raw payloads and measurement generation. On the MCM snapshot it took
+7.5 seconds; later fresh-process debug loads took about 25 ms for metadata, 39 ms
+for analysis and 6 ms for inputs. Schema 2 requires updated application binaries.
+
+The projection version in [`src/store/projection.rs`](../src/store/projection.rs)
+must be bumped when projected labels, descriptors, scalar or identity semantics
+change. The next access then rebuilds the derived data from raw records.
+
+`BenchmarkOut::get_scalar` supports direct scalar access, with the existing group
+lookup as its default. `observation_sources` declares compact identity mappings;
+`Some([])` means no shared identities. Its default `None` preserves custom
+`observation_identity` implementations through a raw-output fallback.
 
 ## Adding a procedure
 

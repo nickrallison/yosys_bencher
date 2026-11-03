@@ -1,4 +1,4 @@
-use super::{engine, plan::*, result::*};
+use super::{cache::Cache, engine, plan::*, result::*};
 use crate::{
     experiment::{BenchmarkIn, BenchmarkOut, InputDescription, InputField, Page},
     metrics::MetricSpec,
@@ -7,8 +7,8 @@ use crate::{
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    marker::PhantomData,
     path::Path,
+    sync::{Arc, OnceLock},
 };
 
 pub use yosys_bench_ui_types::api::*;
@@ -44,11 +44,62 @@ pub trait ExperimentAdapter: Send + Sync {
         paging: Paging,
     ) -> Result<Inspection>;
 }
-struct TypedAdapter<P>(PhantomData<fn() -> P>);
+struct TypedAdapter<P: StoredProcedure> {
+    catalog: Cache<Vec<MetricSpec>>,
+    frames: Cache<AnalysisFrame<P>>,
+    evaluations: Cache<engine::Evaluation>,
+    input_pages: Cache<Page<InputDescription>>,
+}
 impl<P: StoredProcedure> TypedAdapter<P> {
-    fn evaluate(&self, store: &SqliteStore, plan: &AnalysisPlan) -> Result<engine::Evaluation> {
-        let metrics = self.stored_metrics(store, plan.selection.experiment)?;
-        engine::validate::<P::Input>(plan, &metrics)?;
+    fn catalog(
+        &self,
+        store: &SqliteStore,
+        experiment: ExperimentId,
+    ) -> Result<Arc<Vec<MetricSpec>>> {
+        store.ensure_projection::<P>(experiment)?;
+        self.catalog.get(store, &experiment, || {
+            store.projected_metrics::<P>(experiment)
+        })
+    }
+    fn frame(
+        &self,
+        store: &SqliteStore,
+        selection: &ResultSelection,
+        paths: &[String],
+    ) -> Result<Arc<AnalysisFrame<P>>> {
+        self.frames.get(store, &(selection, paths), || {
+            store.projected_frame::<P>(selection, paths)
+        })
+    }
+    fn evaluate(
+        &self,
+        store: &SqliteStore,
+        plan: &AnalysisPlan,
+    ) -> Result<Arc<engine::Evaluation>> {
+        store.ensure_projection::<P>(plan.selection.experiment)?;
+        self.evaluations
+            .get(store, plan, || self.evaluate_uncached(store, plan))
+    }
+    fn evaluate_uncached(
+        &self,
+        store: &SqliteStore,
+        plan: &AnalysisPlan,
+    ) -> Result<engine::Evaluation> {
+        let metrics = self.catalog(store, plan.selection.experiment)?;
+        let metric = engine::validate::<P::Input>(plan, &metrics)?;
+        let mut paths = match metric {
+            None => vec![],
+            Some(metric) => match metric.source {
+                crate::metrics::MetricSource::Path => vec![metric.path],
+                crate::metrics::MetricSource::Formula {
+                    numerator,
+                    denominator,
+                    ..
+                } => vec![numerator, denominator],
+            },
+        };
+        paths.sort();
+        paths.dedup();
         let mut selection = plan.selection.clone();
         if let Operation::Changes {
             comparison: Comparison::Pair { baseline, current },
@@ -63,7 +114,7 @@ impl<P: StoredProcedure> TypedAdapter<P> {
                 },
             };
         }
-        let frame = store.frame::<P>(&selection)?;
+        let frame = self.frame(store, &selection, &paths)?;
         let revisions = frame
             .revisions
             .iter()
@@ -77,7 +128,7 @@ impl<P: StoredProcedure> TypedAdapter<P> {
             if let Some(runs) = &normalization.runs {
                 s.runs = runs.clone();
             }
-            Some(store.frame::<P>(&s)?)
+            Some(self.frame(store, &s, &paths)?)
         } else {
             None
         };
@@ -90,7 +141,7 @@ impl<P: StoredProcedure> TypedAdapter<P> {
                     vec![cohort.baseline.clone(), cohort.current.clone()]
                 },
             };
-            Some(store.frame::<P>(&s)?)
+            Some(self.frame(store, &s, &paths)?)
         } else {
             None
         };
@@ -98,8 +149,8 @@ impl<P: StoredProcedure> TypedAdapter<P> {
             &frame,
             plan,
             &revisions,
-            baseline.as_ref(),
-            cohort.as_ref(),
+            baseline.as_deref(),
+            cohort.as_deref(),
             &metrics,
         )?;
         if store.generation()? != frame.generation {
@@ -108,7 +159,11 @@ impl<P: StoredProcedure> TypedAdapter<P> {
         Ok(result)
     }
 }
-impl<P: StoredProcedure> ExperimentAdapter for TypedAdapter<P> {
+impl<P: StoredProcedure> ExperimentAdapter for TypedAdapter<P>
+where
+    P::Input: Send + Sync,
+    P::Output: Send + Sync,
+{
     fn contract(&self) -> Contract {
         contract_for::<P>()
     }
@@ -120,9 +175,7 @@ impl<P: StoredProcedure> ExperimentAdapter for TypedAdapter<P> {
         store: &SqliteStore,
         experiment: ExperimentId,
     ) -> Result<Vec<MetricSpec>> {
-        Ok(crate::metrics::catalog(
-            store.successful_outputs::<P>(experiment)?.iter(),
-        ))
+        Ok((*self.catalog(store, experiment)?).clone())
     }
     fn default_metric(&self) -> Option<String> {
         P::DEFAULT_METRIC
@@ -139,7 +192,11 @@ impl<P: StoredProcedure> ExperimentAdapter for TypedAdapter<P> {
         search: &str,
         p: Paging,
     ) -> Result<Page<InputDescription>> {
-        store.inputs::<P>(s, search, p.offset, p.limit)
+        store.ensure_projection::<P>(s.experiment)?;
+        Ok((*self.input_pages.get(store, &(s, search, p), || {
+            store.inputs::<P>(s, search, p.offset, p.limit)
+        })?)
+        .clone())
     }
     fn groups(
         &self,
@@ -150,7 +207,7 @@ impl<P: StoredProcedure> ExperimentAdapter for TypedAdapter<P> {
         store.groups::<P>(s, f)
     }
     fn analyze(&self, store: &SqliteStore, plan: &AnalysisPlan) -> Result<AnalysisResponse> {
-        self.evaluate(store, plan).map(|r| r.response)
+        self.evaluate(store, plan).map(|r| r.response.clone())
     }
     fn inspect(
         &self,
@@ -211,8 +268,9 @@ impl<P: StoredProcedure> ExperimentAdapter for TypedAdapter<P> {
         }
         let estimates: Vec<_> = evaluation
             .estimates
-            .into_iter()
+            .iter()
             .filter(|e| ids.contains(&e.id) || e.work_items.iter().any(|w| work_ids.contains(w)))
+            .cloned()
             .collect();
         for e in &estimates {
             work_ids.extend(e.work_items.iter().copied());
@@ -266,14 +324,27 @@ pub struct AdapterRegistration {
     factory: fn() -> Box<dyn ExperimentAdapter>,
 }
 impl AdapterRegistration {
-    pub const fn for_procedure<P: StoredProcedure>() -> Self {
+    pub const fn for_procedure<P: StoredProcedure>() -> Self
+    where
+        P::Input: Send + Sync,
+        P::Output: Send + Sync,
+    {
         Self {
             factory: make_adapter::<P>,
         }
     }
 }
-fn make_adapter<P: StoredProcedure>() -> Box<dyn ExperimentAdapter> {
-    Box::new(TypedAdapter::<P>(PhantomData))
+fn make_adapter<P: StoredProcedure>() -> Box<dyn ExperimentAdapter>
+where
+    P::Input: Send + Sync,
+    P::Output: Send + Sync,
+{
+    Box::new(TypedAdapter::<P> {
+        catalog: Cache::new(4),
+        frames: Cache::new(3),
+        evaluations: Cache::new(8),
+        input_pages: Cache::new(8),
+    })
 }
 inventory::collect!(AdapterRegistration);
 
@@ -281,6 +352,15 @@ pub struct AnalysisRegistry {
     adapters: BTreeMap<String, Box<dyn ExperimentAdapter>>,
 }
 impl AnalysisRegistry {
+    fn shared() -> Result<Arc<Self>> {
+        static REGISTRY: OnceLock<Arc<AnalysisRegistry>> = OnceLock::new();
+        if let Some(registry) = REGISTRY.get() {
+            return Ok(registry.clone());
+        }
+        let registry = Arc::new(Self::discover()?);
+        let _ = REGISTRY.set(registry);
+        Ok(REGISTRY.get().unwrap().clone())
+    }
     pub fn discover() -> Result<Self> {
         let mut adapters = BTreeMap::new();
         for registration in inventory::iter::<AdapterRegistration> {
@@ -350,13 +430,13 @@ impl AnalysisRegistry {
 /// the UI can wrap these methods in Dioxus server functions without knowing P.
 pub struct Backend {
     pub store: SqliteStore,
-    registry: AnalysisRegistry,
+    registry: Arc<AnalysisRegistry>,
 }
 impl Backend {
     pub fn new(store: SqliteStore) -> Result<Self> {
         Ok(Self {
             store,
-            registry: AnalysisRegistry::discover()?,
+            registry: AnalysisRegistry::shared()?,
         })
     }
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {

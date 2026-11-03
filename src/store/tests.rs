@@ -3,6 +3,8 @@ use crate::{analysis::*, experiment::*, metrics::*};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 
+mod cache;
+mod projection;
 mod spread;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

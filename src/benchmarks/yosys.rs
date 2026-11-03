@@ -90,6 +90,9 @@ impl<C> YosysBenchmarkInput<C> {
 }
 
 impl<C: BenchmarkIn> BenchmarkIn for YosysBenchmarkInput<C> {
+    fn warnings(&self) -> Vec<String> {
+        self.config.warnings()
+    }
     fn fields() -> Vec<crate::experiment::InputField> {
         let mut fields = vec![crate::experiment::InputField::new(
             "design",
@@ -168,6 +171,20 @@ impl<M> YosysBenchmarkOutput<M> {
 
 #[contract_trait]
 impl<M: BenchmarkOut> BenchmarkOut for YosysBenchmarkOutput<M> {
+    fn observation_sources(&self) -> Option<Vec<(String, String)>> {
+        Some(vec![])
+    }
+    fn get_scalar(&self, path: &str) -> Option<f64> {
+        if path == "runtime" {
+            return Some(self.runtime.as_secs_f64());
+        }
+        match path.split_once('.')? {
+            ("measurements", path) => self.measurements.get_scalar(path),
+            ("perf", path) => self.perf.as_ref()?.get_scalar(path),
+            ("timings", path) => self.timings.as_ref()?.get_scalar(path),
+            _ => None,
+        }
+    }
     fn analysis_metrics() -> Vec<crate::metrics::MetricSpec> {
         let mut metrics = crate::metrics::describe(&[Self::runtime_descriptor()]);
         metrics[0].direction = crate::metrics::Direction::Lower;

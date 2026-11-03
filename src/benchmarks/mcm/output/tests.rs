@@ -54,6 +54,56 @@ fn stored_outputs_expose_consistent_groups_without_changing_the_payload() {
 }
 
 #[test]
+fn direct_scalar_access_matches_group_lookup_for_all_exposed_paths() {
+    let mut output: McmOutput = serde_json::from_value(stored_payload()).unwrap();
+    output.optimized = output
+        .optimized
+        .with_timings(crate::tools::yosys::YosysTimings {
+            generator: "test".into(),
+            total: Duration::from_secs(4),
+            passes: [(
+                "plugin.pass%".into(),
+                crate::tools::yosys::PassTiming {
+                    runtime: Duration::from_secs(2),
+                    calls: 3,
+                },
+            )]
+            .into(),
+            calls: Some(vec![
+                crate::tools::yosys::PassCall {
+                    name: "opt".into(),
+                    runtime: Duration::from_secs(1),
+                    self_runtime: Duration::from_secs(1),
+                    children: vec![],
+                },
+                crate::tools::yosys::PassCall {
+                    name: "opt".into(),
+                    runtime: Duration::from_secs(2),
+                    self_runtime: Duration::from_secs(2),
+                    children: vec![],
+                },
+            ]),
+        });
+    let mut paths: Vec<_> = catalog([&output]).into_iter().map(|m| m.path).collect();
+    paths.extend(
+        [
+            "optimized.timings.calls.opt~1.runtime",
+            "optimized.timings.calls.opt~02.runtime",
+            "optimized.runtime.extra",
+            "missing.runtime",
+        ]
+        .map(str::to_owned),
+    );
+    for path in paths {
+        assert_eq!(
+            scalar(&output, &path),
+            crate::metrics::scalar_from_group(&output, &path),
+            "{path}"
+        );
+    }
+}
+
+#[test]
 fn derived_metrics_resolve_regrouped_operands_and_pass_timings_remain_available() {
     let mut output: McmOutput = serde_json::from_value(stored_payload()).unwrap();
     output.baseline = output.baseline.with_timings(crate::tools::yosys::YosysTimings::parse(

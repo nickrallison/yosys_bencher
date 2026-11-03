@@ -5,6 +5,7 @@ pub(super) fn coverage<I: BenchmarkIn, O: BenchmarkOut>(
     plan: &AnalysisPlan,
     metric: Option<&MetricSpec>,
     metrics: &[MetricSpec],
+    cache: &mut BTreeMap<AttemptId, Sample>,
 ) -> Vec<CoverageCell> {
     let partitions: BTreeSet<_> = frame.runs.iter().map(|r| r.partition.clone()).collect();
     let partitions = if partitions.is_empty() {
@@ -74,7 +75,7 @@ pub(super) fn coverage<I: BenchmarkIn, O: BenchmarkOut>(
                             None => outcomes.unfinished += 1,
                         }
                         if let Some(metric) = metric {
-                            let s = sample(attempt, work, metric, metrics, plan);
+                            let s = sample(attempt, work, metric, metrics, plan, cache);
                             if let Some(reason) = s.observation.reason {
                                 if reason.starts_with("Missing")
                                     || reason.starts_with("Metric outside")

@@ -113,6 +113,17 @@ impl SqliteStore {
             let (id, json) = row?;
             inputs.insert(id, decode::<P::Input>(&json)?);
         }
+        Self::select_inputs(inputs, selection)
+    }
+    pub(crate) fn select_inputs<I: BenchmarkIn>(
+        mut inputs: BTreeMap<InputId, I>,
+        selection: &InputSelection,
+    ) -> Result<BTreeMap<InputId, I>> {
+        if let InputSelection::Matching { filters, .. } = selection {
+            for filter in filters {
+                filter.validate(&I::fields()).map_err(invalid)?;
+            }
+        }
         let requested = match selection {
             InputSelection::Ids { ids } => Some(ids),
             InputSelection::Matching { excluded, .. } => Some(excluded),
@@ -165,7 +176,8 @@ impl SqliteStore {
         self.validate::<P>(selection.experiment)?;
         let def = self.target_definition(selection.experiment, selection.version)?;
         let search = search.to_lowercase();
-        let inputs = self.typed_inputs::<P>(def.id, &selection.inputs)?;
+        self.ensure_projection::<P>(selection.experiment)?;
+        let inputs = self.projected_inputs::<P>(def.id, &selection.inputs)?;
         let descriptions = self
             .input_order(def.id)?
             .into_iter()
@@ -420,6 +432,7 @@ impl SqliteStore {
     }
     /// Successful payloads across the experiment, including unselected revisions.
     /// Used to discover named metric maps without making absent values into zeros.
+    #[cfg(test)]
     pub(crate) fn successful_outputs<P: StoredProcedure>(
         &self,
         experiment: ExperimentId,
@@ -443,12 +456,30 @@ impl SqliteStore {
         &self,
         selection: &ResultSelection,
     ) -> Result<ResultFrame<P::Input, P::Output>> {
+        self.read_frame::<P, _, _>(
+            selection,
+            |definition, selected| self.typed_inputs::<P>(definition, selected),
+            |works| {
+                let mut attempts = Vec::new();
+                for work in works {
+                    attempts.extend(self.attempts::<P::Output>(work.id)?);
+                }
+                Ok(attempts)
+            },
+        )
+    }
+    pub(crate) fn read_frame<P: StoredProcedure, I: BenchmarkIn, O>(
+        &self,
+        selection: &ResultSelection,
+        load_inputs: impl FnOnce(DefinitionId, &InputSelection) -> Result<BTreeMap<InputId, I>>,
+        load_attempts: impl FnOnce(&[WorkItemSummary]) -> Result<Vec<StoredAttempt<O>>>,
+    ) -> Result<ResultFrame<I, O>> {
         // A transaction gives all parts of a frame one SQLite snapshot.
         let tx = self.connection.unchecked_transaction()?;
         self.validate::<P>(selection.experiment)?;
         let generation = self.generation()?;
         let definition = self.target_definition(selection.experiment, selection.version)?;
-        let inputs = self.typed_inputs::<P>(definition.id, &selection.inputs)?;
+        let inputs = load_inputs(definition.id, &selection.inputs)?;
         let input_order = self
             .input_order(definition.id)?
             .into_iter()
@@ -550,10 +581,7 @@ impl SqliteStore {
                 work_items.extend(items);
             }
         }
-        let mut attempts = Vec::new();
-        for work in &work_items {
-            attempts.extend(self.attempts::<P::Output>(work.id)?);
-        }
+        let attempts = load_attempts(&work_items)?;
         tx.commit()?;
         Ok(ResultFrame {
             generation,

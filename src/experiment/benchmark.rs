@@ -49,6 +49,10 @@ pub trait BenchmarkIn: Clone + Eq + Hash + Serialize + DeserializeOwned {
     fn label(&self) -> String {
         "Input".into()
     }
+    /// Nonfatal input issues to show with analysis results.
+    fn warnings(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 impl BenchmarkIn for () {}
@@ -62,8 +66,25 @@ pub trait BenchmarkOut: Clone + Serialize + DeserializeOwned {
     }
 
     /// Identity within a run for observations reused by multiple outputs.
-    fn observation_identity(&self, _path: &str) -> Option<String> {
+    fn observation_identity(&self, path: &str) -> Option<String> {
+        self.observation_sources()
+            .unwrap_or_default()
+            .into_iter()
+            .find_map(|(prefix, source)| {
+                path.strip_prefix(&prefix)
+                    .map(|suffix| format!("{source}{suffix}"))
+            })
+    }
+
+    /// Compact prefix/source mappings, including missing metrics. None keeps the
+    /// original output available for custom observation_identity implementations.
+    fn observation_sources(&self) -> Option<Vec<(String, String)>> {
         None
+    }
+
+    /// Read one scalar without constructing unrelated metric groups.
+    fn get_scalar(&self, path: &str) -> Option<f64> {
+        crate::metrics::scalar_from_group(self, path)
     }
 
     fn metrics(&self) -> MetricValue {

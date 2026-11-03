@@ -50,6 +50,9 @@ pub struct McmInput {
 }
 
 impl BenchmarkIn for McmInput {
+    fn warnings(&self) -> Vec<String> {
+        self.synthesis.warnings()
+    }
     fn fields() -> Vec<crate::experiment::InputField> {
         use crate::experiment::{FieldKind as K, InputField as F};
         let mut fields = vec![

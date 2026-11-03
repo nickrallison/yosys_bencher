@@ -126,6 +126,7 @@ pub(crate) fn evaluate<I: BenchmarkIn, O: BenchmarkOut>(
             return Err(StoreError::Expired);
         }
     }
+    let mut samples = BTreeMap::new();
     let snapshot = Snapshot {
         generation: frame.generation,
         plan: plan.clone(),
@@ -162,8 +163,14 @@ pub(crate) fn evaluate<I: BenchmarkIn, O: BenchmarkOut>(
         changes: Page::from_items([], 0, 0),
         change_summaries: vec![],
         distributions: Page::from_items([], 0, 0),
-        coverage: coverage(frame, plan, metric.as_ref(), metrics),
-        warnings: vec![],
+        coverage: coverage(frame, plan, metric.as_ref(), metrics, &mut samples),
+        warnings: frame
+            .inputs
+            .values()
+            .flat_map(BenchmarkIn::warnings)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
     };
     if !frame.newer_unfinished.is_empty() {
         response.warnings.push(
@@ -190,7 +197,7 @@ pub(crate) fn evaluate<I: BenchmarkIn, O: BenchmarkOut>(
     } else {
         metric.reference
     };
-    let (per_run, mut data) = estimates(frame, &metric, metrics, plan);
+    let (per_run, mut data) = estimates(frame, &metric, metrics, plan, &mut samples);
     let mut catalog = BTreeMap::<String, Estimated>::new();
     for d in per_run.iter().chain(data.values()) {
         catalog.insert(d.estimate.id.clone(), d.clone());
@@ -198,7 +205,7 @@ pub(crate) fn evaluate<I: BenchmarkIn, O: BenchmarkOut>(
     let mut groups = groups(frame, plan)?;
     if let Some(cohort) = &plan.cohort {
         let reference = cohort_frame.ok_or_else(|| invalid("cohort", "missing endpoint data"))?;
-        let (_, cohort_data) = estimates(reference, &metric, metrics, plan);
+        let (_, cohort_data) = estimates(reference, &metric, metrics, plan, &mut samples);
         let mut active = BTreeSet::new();
         for (key, a) in &cohort_data {
             if key.1 != cohort.baseline {
@@ -233,7 +240,7 @@ pub(crate) fn evaluate<I: BenchmarkIn, O: BenchmarkOut>(
     }
     if let Some(normalization) = &plan.normalization {
         let baseline = baseline.ok_or_else(|| invalid("normalization", "missing baseline data"))?;
-        let (_, mut baseline_data) = estimates(baseline, &metric, metrics, plan);
+        let (_, mut baseline_data) = estimates(baseline, &metric, metrics, plan, &mut samples);
         for d in baseline_data.values_mut() {
             d.estimate.id = id(&("baseline", &d.estimate.id));
             catalog.insert(d.estimate.id.clone(), d.clone());

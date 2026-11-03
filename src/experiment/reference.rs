@@ -30,6 +30,16 @@ pub struct Reference<M> {
 
 #[contract_trait]
 impl<M: BenchmarkOut> BenchmarkOut for Reference<M> {
+    fn observation_sources(&self) -> Option<Vec<(String, String)>> {
+        Some(vec![])
+    }
+    fn get_scalar(&self, path: &str) -> Option<f64> {
+        match path.split_once('.')? {
+            ("measurements", path) => self.measurements.get_scalar(path),
+            ("perf", path) => self.perf.as_ref()?.get_scalar(path),
+            _ => None,
+        }
+    }
     fn list_metrics() -> Vec<MetricDescriptor> {
         vec![
             MetricDescriptor::group("measurements", M::list_metrics()),

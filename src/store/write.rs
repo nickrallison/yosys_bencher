@@ -86,6 +86,7 @@ impl SqliteStore {
                 known.push((id, input.clone()));
                 id
             };
+            Self::project_input(&tx, id, input)?;
             input_ids.push(id);
         }
         let wanted: BTreeSet<_> = input_ids.iter().copied().collect();
@@ -216,13 +217,16 @@ impl SqliteStore {
         directory: Option<&Path>,
     ) -> Result<()> {
         let tx = self.connection.transaction()?;
-        let (contract,state,work_state,run_state):(String,String,String,String)=tx.query_row("SELECT e.contract,a.state,w.state,r.state FROM attempts a JOIN work_items w ON w.id=a.work_item JOIN runs r ON r.id=w.run JOIN experiments e ON e.id=r.experiment WHERE a.id=?",[attempt.0],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
+        let (contract,state,work_state,run_state,experiment,measurement):(String,String,String,String,i64,bool)=tx.query_row("SELECT e.contract,a.state,w.state,r.state,e.id,coalesce(json_extract(r.plan,'$.purpose'),'measurement')='measurement' FROM attempts a JOIN work_items w ON w.id=a.work_item JOIN runs r ON r.id=w.run JOIN experiments e ON e.id=r.experiment WHERE a.id=?",[attempt.0],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)))?;
         if decode::<Contract>(&contract)? != contract_for::<P>() {
             return Err(invalid("Attempt output contract mismatch"));
         }
         if state != "running" || work_state != "running" || run_state != "running" {
             return Err(invalid("Attempt is already finished or interrupted"));
         }
+        let experiment = ExperimentId(experiment);
+        Self::ensure_projection_on::<P>(&tx, experiment)?;
+        Self::project_record::<P>(&tx, experiment, attempt, record, measurement)?;
         let outcome = match &record.outcome {
             crate::experiment::AttemptOutcome::Success(_) => "success",
             crate::experiment::AttemptOutcome::Failure(_) => "failure",

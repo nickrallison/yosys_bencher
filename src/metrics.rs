@@ -14,6 +14,16 @@ pub enum MetricValue {
 }
 
 impl MetricValue {
+    pub fn as_scalar(&self) -> Option<f64> {
+        let value = match self {
+            Self::Int(v) => *v as f64,
+            Self::UInt(v) => *v as f64,
+            Self::Float(v) => *v,
+            Self::Duration(v) => v.as_secs_f64(),
+            _ => return None,
+        };
+        value.is_finite().then_some(value)
+    }
     pub fn kind(&self) -> Option<MetricType> {
         match self {
             Self::Int(_) => Some(MetricType::Int),
@@ -150,6 +160,14 @@ macro_rules! benchmark_metrics {
     ($ty:ty { $( $form:ident $field:ident ( $($args:tt)* ); )* }) => {
         #[contracts::contract_trait]
         impl $crate::experiment::BenchmarkOut for $ty {
+            fn observation_sources(&self) -> Option<Vec<(String, String)>> { Some(vec![]) }
+            fn get_scalar(&self, path: &str) -> Option<f64> {
+                let (name, rest) = path.split_once('.').map_or((path, None), |(n, p)| (n, Some(p)));
+                match name {
+                    $(stringify!($field) => $crate::benchmark_metrics!(@scalar self, $form $field (rest) ($($args)*)),)*
+                    _ => None,
+                }
+            }
             fn list_metrics() -> Vec<$crate::metrics::MetricDescriptor> {
                 vec![$($crate::benchmark_metrics!(@descriptor $form $field ($($args)*))),*]
             }
@@ -161,6 +179,14 @@ macro_rules! benchmark_metrics {
             }
         }
     };
+    (@scalar $this:ident, group $field:ident ($rest:ident) ($ty:ty)) => {
+        $crate::experiment::BenchmarkOut::get_scalar(&$this.$field, $rest?)
+    };
+    (@scalar $this:ident, $form:ident $field:ident ($rest:ident) ($($args:tt)*)) => {{
+        if $rest.is_some() { None } else {
+            $crate::benchmark_metrics!(@value $this, $form $field ($($args)*))?.as_scalar()
+        }
+    }};
     (@descriptor group $field:ident ($ty:ty)) => {
         $crate::metrics::MetricDescriptor::group(stringify!($field), <$ty as $crate::experiment::BenchmarkOut>::list_metrics())
     };

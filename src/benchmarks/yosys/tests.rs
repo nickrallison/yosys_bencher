@@ -219,7 +219,19 @@ fn stored_pass_metrics_are_discovered_and_missing_timings_remain_gaps() {
             &RunPlan::new(revisions.into(), 1),
         )
         .unwrap();
+    let mut backend = Backend::new(store).unwrap();
+    // Populate the catalog cache before pass metrics exist. New measurements must
+    // invalidate it so newly recorded named passes remain discoverable.
+    assert!(
+        !backend
+            .describe(run.experiment)
+            .unwrap()
+            .metrics
+            .iter()
+            .any(|m| m.path == "timings.passes.opt.runtime")
+    );
     for revision in ["old", "new"] {
+        let store = &mut backend.store;
         let work = run.work_items[revision][&run.inputs[0]];
         let attempt = store.start_attempt(work, 0).unwrap();
         let mut output = YosysBenchmarkOutput::new(Duration::from_secs(1), ());
@@ -245,8 +257,7 @@ fn stored_pass_metrics_are_discovered_and_missing_timings_remain_gaps() {
             .unwrap();
         store.finish_work_item(work).unwrap();
     }
-    store.finish_run(run.run).unwrap();
-    let backend = Backend::new(store).unwrap();
+    backend.store.finish_run(run.run).unwrap();
     let metadata = backend.describe(run.experiment).unwrap();
     let path = "timings.passes.opt.runtime";
     let metric = metadata.metrics.iter().find(|m| m.path == path).unwrap();

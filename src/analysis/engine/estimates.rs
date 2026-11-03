@@ -6,6 +6,20 @@ pub(super) fn sample<O: BenchmarkOut>(
     metric: &MetricSpec,
     metrics: &[MetricSpec],
     plan: &AnalysisPlan,
+    cache: &mut BTreeMap<AttemptId, Sample>,
+) -> Sample {
+    cache
+        .entry(attempt.id)
+        .or_insert_with(|| extract_sample(attempt, work, metric, metrics, plan))
+        .clone()
+}
+
+fn extract_sample<O: BenchmarkOut>(
+    attempt: &StoredAttempt<O>,
+    work: &WorkItemSummary,
+    metric: &MetricSpec,
+    metrics: &[MetricSpec],
+    plan: &AnalysisPlan,
 ) -> Sample {
     let mut observation = Observation {
         attempt: attempt.id,
@@ -205,6 +219,7 @@ pub(super) fn estimates<I: BenchmarkIn, O: BenchmarkOut>(
     metric: &MetricSpec,
     metrics: &[MetricSpec],
     plan: &AnalysisPlan,
+    cache: &mut BTreeMap<AttemptId, Sample>,
 ) -> (Vec<Estimated>, BTreeMap<Key, Estimated>) {
     let mut per_run = Vec::new();
     for work in &frame.work_items {
@@ -219,7 +234,7 @@ pub(super) fn estimates<I: BenchmarkIn, O: BenchmarkOut>(
             .attempts
             .iter()
             .filter(|a| a.work_item == work.id)
-            .map(|a| sample(a, work, metric, metrics, plan))
+            .map(|a| sample(a, work, metric, metrics, plan, cache))
             .collect();
         let mut reasons = Vec::new();
         if let Some(reason) = &work.reason {

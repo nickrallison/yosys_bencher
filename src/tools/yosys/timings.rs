@@ -184,6 +184,16 @@ fn call_metrics(calls: &[PassCall]) -> MetricValue {
 
 #[contracts::contract_trait]
 impl BenchmarkOut for PassTiming {
+    fn observation_sources(&self) -> Option<Vec<(String, String)>> {
+        Some(vec![])
+    }
+    fn get_scalar(&self, path: &str) -> Option<f64> {
+        match path {
+            "runtime" => Some(self.runtime.as_secs_f64()),
+            "calls" => Some(self.calls as f64),
+            _ => None,
+        }
+    }
     fn list_metrics() -> Vec<MetricDescriptor> {
         vec![
             MetricDescriptor::new(
@@ -214,6 +224,64 @@ impl BenchmarkOut for PassTiming {
 
 #[contracts::contract_trait]
 impl BenchmarkOut for YosysTimings {
+    fn observation_sources(&self) -> Option<Vec<(String, String)>> {
+        Some(vec![])
+    }
+    fn get_scalar(&self, path: &str) -> Option<f64> {
+        if path == "total" {
+            return Some(self.total.as_secs_f64());
+        }
+        let (kind, path) = path.split_once('.')?;
+        if kind == "passes" {
+            let (name, field) = path.split_once('.')?;
+            let decoded = name.replace("%2E", ".").replace("%25", "%");
+            if decoded.replace('%', "%25").replace('.', "%2E") != name {
+                return None;
+            }
+            return self.passes.get(&decoded)?.get_scalar(field);
+        }
+        if kind != "calls" {
+            return None;
+        }
+        let mut calls = self.calls.as_deref()?;
+        let mut path = path;
+        loop {
+            let (key, rest) = path.split_once('.')?;
+            let (name, occurrence) = match key.rsplit_once('~') {
+                Some((name, number)) => {
+                    let n = number.parse::<usize>().ok()?;
+                    if n < 2 || n.to_string() != number {
+                        return None;
+                    }
+                    (name, n)
+                }
+                None => (key, 1),
+            };
+            let name = name
+                .replace("%7E", "~")
+                .replace("%2E", ".")
+                .replace("%25", "%");
+            let encoded = name
+                .replace('%', "%25")
+                .replace('.', "%2E")
+                .replace('~', "%7E");
+            if key.split('~').next()? != encoded {
+                return None;
+            }
+            let call = calls
+                .iter()
+                .filter(|c| c.name == name)
+                .nth(occurrence.checked_sub(1)?)?;
+            match rest {
+                "runtime" => return Some(call.runtime.as_secs_f64()),
+                "self_runtime" => return Some(call.self_runtime.as_secs_f64()),
+                _ => {
+                    path = rest.strip_prefix("children.")?;
+                    calls = &call.children;
+                }
+            }
+        }
+    }
     fn list_metrics() -> Vec<MetricDescriptor> {
         vec![
             MetricDescriptor::new(
