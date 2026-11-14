@@ -19,3 +19,4 @@ cargo run --bin run_mcm
 The database defaults to `output/results.sqlite`; set `YOSYS_BENCH_DATABASE` to
 choose another path. Start the UI with `cd webapp` and
 `dx serve --web --fullstack true`.
+To share the UI on your tailnet, run `./scripts/serve`.

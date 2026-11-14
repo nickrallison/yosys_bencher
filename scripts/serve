@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+port=${PORT:-8080}
+
+for command in dx tailscale; do
+    if ! command -v "$command" >/dev/null; then
+        printf 'Missing required command: %s\n' "$command" >&2
+        exit 1
+    fi
+done
+
+dx_pid=
+tailscale_pid=
+cleanup() {
+    for pid in "$tailscale_pid" "$dx_pid"; do
+        if [[ -n "$pid" ]]; then
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+cd "$root/webapp"
+dx serve --web --fullstack true --addr 127.0.0.1 --port "$port" \
+    --open false --interactive false &
+dx_pid=$!
+
+printf 'Sharing http://127.0.0.1:%s on your tailnet. Ctrl-C stops both services.\n' "$port"
+printf 'Tailscale will print the HTTPS link below; wait for Dioxus to finish building.\n'
+tailscale serve "http://127.0.0.1:$port" <&0 &
+tailscale_pid=$!
+
+wait -n "$dx_pid" "$tailscale_pid"
