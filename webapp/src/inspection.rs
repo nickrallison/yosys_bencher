@@ -1,6 +1,6 @@
 use crate::{api, model::*, output::Pager};
 use dioxus::prelude::*;
-use yosys_bench_ui_types::{analysis::*, api::*, experiment::*, store::*};
+use yosys_bencher_ui_types::{analysis::*, api::*, experiment::*, store::*};
 #[component]
 pub fn Inspector(
     snapshot: Snapshot,

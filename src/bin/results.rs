@@ -5,7 +5,7 @@ use std::{
     io::{self, BufReader},
     path::PathBuf,
 };
-use yosys_bench::{
+use yosys_bencher::{
     analysis::{AnalysisPlan, Backend, InputRequest, InspectionRequest, Paging},
     store::{ArtifactId, ExperimentId, RevisionQuery, RunId, SqliteStore, WorkItemId},
 };

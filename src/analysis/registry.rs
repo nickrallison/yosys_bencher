@@ -11,7 +11,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-pub use yosys_bench_ui_types::api::*;
+pub use yosys_bencher_ui_types::api::*;
 pub trait ExperimentAdapter: Send + Sync {
     fn contract(&self) -> Contract;
     fn metrics(&self) -> Vec<MetricSpec>;

@@ -1,5 +1,5 @@
 use super::{MetricDescriptor, MetricValue};
-pub use yosys_bench_ui_types::metrics::*;
+pub use yosys_bencher_ui_types::metrics::*;
 pub fn describe(descriptors: &[MetricDescriptor]) -> Vec<MetricSpec> {
     fn visit(out: &mut Vec<MetricSpec>, prefix: &str, descriptors: &[MetricDescriptor]) {
         for descriptor in descriptors {

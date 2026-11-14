@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::SuiteDefinition;
 use crate::src_manager::git::history::Commit;
 
-pub use yosys_bench_ui_types::experiment::{AttemptOutcome, AttemptRecord};
+pub use yosys_bencher_ui_types::experiment::{AttemptOutcome, AttemptRecord};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Attempt<O> {

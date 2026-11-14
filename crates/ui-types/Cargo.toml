@@ -1,5 +1,5 @@
 [package]
-name = "yosys-bench-ui-types"
+name = "yosys-bencher-ui-types"
 version = "0.1.0"
 edition = "2024"
 

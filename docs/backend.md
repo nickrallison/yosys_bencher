@@ -5,7 +5,7 @@ workspace styling and Plotly bridge.
 
 - `store::SqliteStore` registers workloads and incrementally writes typed results.
 - `analysis::Backend` provides discovery, selection, analysis, and inspection.
-- `yosys-bench-ui-types` contains shared serializable types. It builds for native
+- `yosys-bencher-ui-types` contains shared serializable types. It builds for native
   and WebAssembly targets without SQLite or benchmark tools.
 
 ## Running and querying
@@ -230,7 +230,7 @@ Register the adapter beside the procedure:
 
 ```rust
 inventory::submit! {
-    yosys_bench::analysis::AdapterRegistration::for_procedure::<MyProcedure>()
+    yosys_bencher::analysis::AdapterRegistration::for_procedure::<MyProcedure>()
 }
 ```
 

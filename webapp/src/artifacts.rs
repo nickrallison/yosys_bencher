@@ -1,4 +1,4 @@
-use yosys_bench_ui_types::store::ArtifactId;
+use yosys_bencher_ui_types::store::ArtifactId;
 
 pub fn url(id: ArtifactId) -> String {
     format!("/artifacts/{id}")
@@ -14,7 +14,7 @@ mod server {
         response::{IntoResponse, Response},
     };
     use serde::Deserialize;
-    use yosys_bench_ui_types::api::ErrorKind;
+    use yosys_bencher_ui_types::api::ErrorKind;
 
     #[derive(Default, Deserialize)]
     pub struct Options {
@@ -26,7 +26,7 @@ mod server {
         match backend(|b| {
             let artifact = b.store.artifact(ArtifactId(id))?;
             if !artifact.available {
-                return Err(yosys_bench::store::StoreError::NotFound(format!(
+                return Err(yosys_bencher::store::StoreError::NotFound(format!(
                     "artifact {id} is unavailable"
                 )));
             }

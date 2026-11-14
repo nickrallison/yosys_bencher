@@ -124,7 +124,7 @@ input/environment slots; the table retains individual run and attempt counts.
 
 `webapp/src/api.rs` wraps discovery, input paging, grouping, analysis, inspection,
 and artifact access in typed Dioxus server functions. Only the native server links
-SQLite and benchmark adapters; the browser uses `yosys-bench-ui-types`.
+SQLite and benchmark adapters; the browser uses `yosys-bencher-ui-types`.
 `StoredProcedure::DEFAULT_METRIC` optionally chooses the initial metric; otherwise
 the first declared metric is used. Registry discovery validates that default.
 

@@ -1,5 +1,5 @@
 use std::{fs, path::PathBuf, process::ExitCode};
-use yosys_bench::{
+use yosys_bencher::{
     benchmarks::{
         mcm::{CoefficientGenerator, CoefficientSets, McmSuite, PaperTool},
         synth::CellLibrary,
@@ -59,7 +59,7 @@ fn run(progress: &Progress) -> Result<(), Box<dyn std::error::Error>> {
         &RunOptions {
             repetitions: std::num::NonZeroU32::new(5).expect("n must be positive"),
             progress: progress.clone(),
-            perf: Some(yosys_bench::tools::perf::PerfProfiler::new(
+            perf: Some(yosys_bencher::tools::perf::PerfProfiler::new(
                 "llvm-addr2line",
             )?),
             ..RunOptions::default()

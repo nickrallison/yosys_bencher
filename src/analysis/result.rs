@@ -1,1 +1,1 @@
-pub use yosys_bench_ui_types::analysis::result::*;
+pub use yosys_bencher_ui_types::analysis::result::*;

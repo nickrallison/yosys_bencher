@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error};
 
 use super::{BenchmarkIn, ExperimentError, Procedure, ProcedureId};
 
-pub use yosys_bench_ui_types::Version;
+pub use yosys_bencher_ui_types::Version;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CmpSuite {

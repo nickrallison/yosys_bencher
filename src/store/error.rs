@@ -19,9 +19,9 @@ pub enum StoreError {
 }
 pub type Result<T> = std::result::Result<T, StoreError>;
 
-impl From<&StoreError> for yosys_bench_ui_types::api::ApiError {
+impl From<&StoreError> for yosys_bencher_ui_types::api::ApiError {
     fn from(error: &StoreError) -> Self {
-        use yosys_bench_ui_types::api::ErrorKind;
+        use yosys_bencher_ui_types::api::ErrorKind;
         let (kind, field) = match error {
             StoreError::Validation { field, .. } => (ErrorKind::Validation, Some(field.clone())),
             StoreError::Invalid(_) => (ErrorKind::Validation, None),

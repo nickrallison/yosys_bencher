@@ -2,7 +2,7 @@ use crate::api::Metadata;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
-use yosys_bench_ui_types::{analysis::*, experiment::*, metrics::*, store::*};
+use yosys_bencher_ui_types::{analysis::*, experiment::*, metrics::*, store::*};
 pub fn encoded(value: &impl Serialize) -> String {
     serde_json::to_string(value).unwrap_or_default()
 }

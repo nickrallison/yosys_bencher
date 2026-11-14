@@ -1,7 +1,7 @@
 use crate::{controls::Choice, model::*};
 use dioxus::prelude::*;
 use serde_json::{Value, json};
-use yosys_bench_ui_types::experiment::*;
+use yosys_bencher_ui_types::experiment::*;
 #[component]
 pub fn Filters(
     fields: Vec<InputField>,

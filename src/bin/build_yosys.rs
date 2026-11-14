@@ -1,7 +1,7 @@
 use std::{io, path::PathBuf, process::ExitCode};
-use yosys_bench::progress::Progress;
+use yosys_bencher::progress::Progress;
 
-use yosys_bench::src_manager::{
+use yosys_bencher::src_manager::{
     build::CcacheCMakeBuilder,
     git::{GitManager, history::CommitId},
 };

@@ -39,8 +39,8 @@ fn instrument(source: &str) -> Result<String> {
     let mut source = source.to_owned();
     for (needle, replacement) in [
         ("YOSYS_NAMESPACE_BEGIN\n", format!("YOSYS_NAMESPACE_BEGIN\n{}\n", include_str!("call_trace.inc"))),
-        ("state.begin_ns = PerformanceTimer::query();", "yosys_bench_call_trace.enter(pass_name);\n\tstate.begin_ns = PerformanceTimer::query();".into()),
-        ("int64_t time_ns = PerformanceTimer::query() - state.begin_ns;", "yosys_bench_call_trace.leave();\n\tint64_t time_ns = PerformanceTimer::query() - state.begin_ns;".into()),
+        ("state.begin_ns = PerformanceTimer::query();", "yosys_bencher_call_trace.enter(pass_name);\n\tstate.begin_ns = PerformanceTimer::query();".into()),
+        ("int64_t time_ns = PerformanceTimer::query() - state.begin_ns;", "yosys_bencher_call_trace.leave();\n\tint64_t time_ns = PerformanceTimer::query() - state.begin_ns;".into()),
     ] {
         if source.matches(needle).count() != 1 {
             return Err(ExperimentError::Unsupported(format!(

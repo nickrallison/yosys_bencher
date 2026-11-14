@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use yosys_bench_ui_types::{analysis::*, api::*, store::*};
+use yosys_bencher_ui_types::{analysis::*, api::*, store::*};
 mod api;
 mod artifacts;
 mod chart;
@@ -173,8 +173,13 @@ fn LoadedWorkspace(meta: api::Metadata, epoch: u64, on_refresh: EventHandler<()>
     let pending = encoded(&draft()) != encoded(&applied());
     let edit_meta = meta.clone();
     let edit = use_callback(move |change: controls::Edit| {
+        let auto_apply = matches!(&change, controls::Edit::Metric(_));
         let mut next = draft();
         let message = controls::apply(&mut next, change, &edit_meta);
+        if auto_apply {
+            applied.set(next.clone());
+            selected_row.set(None);
+        }
         draft.set(next);
         notice.set(message);
     });

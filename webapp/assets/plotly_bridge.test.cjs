@@ -5,16 +5,23 @@ const vm = require('node:vm');
 const source = fs.readFileSync(`${__dirname}/plotly_bridge.js`, 'utf8');
 const plain = value => JSON.parse(JSON.stringify(value));
 async function render(chart, options = {}, click) {
-  let render, handler, reads = 0, purged = false;
+  return renderSequence([{ chart, options }], click);
+}
+async function renderSequence(specs, click) {
+  let handler, reads = 0, purged = false;
+  const renders = [];
   const messages = [];
   const host = { removeAllListeners() {}, on(_, fn) { handler = fn; } };
   const context = {
     document: { getElementById() { return host; }, documentElement: {} },
     getComputedStyle() { return { fontFamily: 'sans-serif', getPropertyValue() { return '#202936'; } }; },
-    Plotly: { async react(_, traces, layout) { render = { traces, layout }; host.data = traces; }, purge() { purged = true; } },
+    Plotly: { async react(_, traces, layout) { renders.push({ traces, layout }); host.data = traces; }, purge() { purged = true; delete host.data; } },
     dioxus: {
       async recv() {
-        if (reads++ === 0) return { chart, options: { y_scale: 'linear', show_reference_lines: true, show_spread: true, ...options } };
+        if (reads < specs.length) {
+          const { chart, options } = specs[reads++];
+          return { chart, options: { y_scale: 'linear', show_reference_lines: true, show_spread: true, ...options } };
+        }
         if (click) handler({ points: [{ data: { uid: 'ignored-position' }, pointIndex: 999, customdata: click }] });
         return null;
       },
@@ -22,7 +29,7 @@ async function render(chart, options = {}, click) {
     }
   };
   await vm.runInNewContext(`(async () => { ${source}\n })()`, context);
-  return { ...plain(render), messages: plain(messages), purged };
+  return { ...plain(renders.at(-1)), renders: plain(renders), messages: plain(messages), purged };
 }
 function spec(points) {
   return { id: 'snapshot-1', x_label: 'Width', y_label: 'Runtime (s)', x_type: 'linear', x_values: [8, 16], x_labels: ['8', '16'], barmode: 'group', reference_lines: [{value: 1, label: 'Reference'}], series: [{ id: 'series-1', label: 'Runtime', kind: 'scatter', points }] };
@@ -66,6 +73,24 @@ test('combined history has no spread and workload variation is explicit', async 
   const variation = await render(chart);
   assert.deepEqual(variation.traces[0].error_y.array, [3]);
   assert.match(variation.traces[1].customdata[0][1], /3 measurements/);
+});
+
+test('switching metrics clears old spread and restores bars for repeated measurements', async () => {
+  const runtime = spec([{ x: 8, y: 10, row: 'a', spread: { count: 5, mean: 10, min: 8, max: 12, standard_deviation: 1 } }]);
+  const ratio = spec([{ x: 8, y: 5, row: 'a', spread: null }]);
+  ratio.id = 'ratio';
+  const result = await renderSequence([
+    { chart: runtime, options: { show_range: true } },
+    { chart: ratio, options: { show_range: true } },
+    { chart: null },
+    { chart: runtime, options: { show_range: true } }
+  ]);
+  const [before, derived, restored] = result.renders;
+  assert.deepEqual(before.traces.map(t => t.uid), ['series-1-range', 'series-1-sd', 'series-1']);
+  assert.equal(derived.traces.length, 1);
+  assert.deepEqual(derived.traces[0].y, [5]);
+  assert.equal(derived.traces[0].error_y, undefined);
+  assert.deepEqual(restored.traces, before.traces);
 });
 
 test('hover uses one neutral card and wraps long labels without losing inspection IDs', async () => {

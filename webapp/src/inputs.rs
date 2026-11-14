@@ -6,7 +6,7 @@ use crate::{
     model::*,
 };
 use dioxus::prelude::*;
-use yosys_bench_ui_types::{analysis::Paging, api::InputRequest, store::*};
+use yosys_bencher_ui_types::{analysis::Paging, api::InputRequest, store::*};
 #[component]
 pub fn InputPicker(
     meta: Metadata,

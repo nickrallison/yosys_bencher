@@ -598,7 +598,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "yosys-bench-ui-types"
+name = "yosys-bencher-ui-types"
 version = "0.1.0"
 dependencies = [
  "getset",
@@ -607,7 +607,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "yosys_bench"
+name = "yosys_bencher"
 version = "0.1.0"
 dependencies = [
  "contracts",
@@ -622,7 +622,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror",
- "yosys-bench-ui-types",
+ "yosys-bencher-ui-types",
 ]
 
 [[package]]

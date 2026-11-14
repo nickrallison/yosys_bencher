@@ -5,16 +5,16 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     rc::Rc,
 };
-use yosys_bench::{benchmarks::mcm::McmOutput, experiment::BenchmarkOut};
+use yosys_bencher::{benchmarks::mcm::McmOutput, experiment::BenchmarkOut};
 
 fn trace_metrics() -> Vec<MetricSpec> {
-    use yosys_bench::{benchmarks::yosys::YosysBenchmarkOutput, tools::yosys::YosysTimings};
+    use yosys_bencher::{benchmarks::yosys::YosysBenchmarkOutput, tools::yosys::YosysTimings};
     let timings = YosysTimings::parse(br#"{"generator":"test","total_ns":0,"passes":{}}"#)
         .unwrap()
         .with_call_trace(include_bytes!("../../../tests/fixtures/yosys-calls.json"))
         .unwrap();
     let output = YosysBenchmarkOutput::new(std::time::Duration::ZERO, ()).with_timings(timings);
-    yosys_bench::metrics::catalog([&output])
+    yosys_bencher::metrics::catalog([&output])
         .into_iter()
         .map(|m| m.prefixed("baseline"))
         .collect()

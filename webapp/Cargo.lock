@@ -217,8 +217,8 @@ dependencies = [
  "dioxus-html",
  "serde",
  "serde_json",
- "yosys-bench-ui-types",
- "yosys_bench",
+ "yosys-bencher-ui-types",
+ "yosys_bencher",
 ]
 
 [[package]]
@@ -4163,7 +4163,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "yosys-bench-ui-types"
+name = "yosys-bencher-ui-types"
 version = "0.1.0"
 dependencies = [
  "getset",
@@ -4172,7 +4172,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "yosys_bench"
+name = "yosys_bencher"
 version = "0.1.0"
 dependencies = [
  "contracts",
@@ -4187,7 +4187,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 2.0.21",
- "yosys-bench-ui-types",
+ "yosys-bencher-ui-types",
 ]
 
 [[package]]

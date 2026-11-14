@@ -1,6 +1,6 @@
 use crate::{api::Metadata, inputs::InputPicker, model::*};
 use dioxus::prelude::*;
-use yosys_bench_ui_types::{analysis::*, api::ApiError, metrics::*, store::*};
+use yosys_bencher_ui_types::{analysis::*, api::ApiError, metrics::*, store::*};
 #[derive(Clone)]
 pub enum Edit {
     Metric(String),
@@ -175,7 +175,7 @@ pub fn Sidebar(
             HistorySettings { meta: meta.clone(), plan: plan.clone(), on_edit }
             section { class: "editor-section", id: "plot-controls",
                 h2 { "Axes and reference lines" }
-                PlotControls { plan: plan.clone(), plot, on_change: on_plot }
+                PlotControls { meta: meta.clone(), plan: plan.clone(), plot, on_change: on_plot }
             }
             div { class: "apply-controls",
                 if let Some(field) = error_field {
@@ -480,6 +480,7 @@ fn HistoryControls(meta: Metadata, plan: AnalysisPlan, on_edit: EventHandler<Edi
 }
 #[component]
 fn PlotControls(
+    meta: Metadata,
     plan: AnalysisPlan,
     plot: PlotOptions,
     on_change: EventHandler<PlotOptions>,
@@ -488,6 +489,19 @@ fn PlotControls(
     let min = plot.clone();
     let max = plot.clone();
     let lines = plot.clone();
+    let averaged_metric = metric(&meta, &plan).is_some_and(|m| {
+        matches!(
+            m.source,
+            MetricSource::Formula {
+                stage: FormulaStage::Input | FormulaStage::Suite,
+                ..
+            }
+        )
+    });
+    let spread_disabled = line_view(&plan) != "inputs"
+        || averaged_metric
+        || plan.normalization.is_some()
+        || matches!(plan.runs, Some(RunTreatment::Summaries { .. }));
     rsx! {
         Choice {
             label: "Y scale",
@@ -508,12 +522,19 @@ fn PlotControls(
         }
         if matches!(plan.operation, Operation::History) {
             Toggle {
-                label: "Standard deviation (±1 SD)", value: plot.show_spread, disabled: line_view(&plan) != "inputs",
+                label: "Standard deviation (±1 SD)", value: plot.show_spread && !spread_disabled, disabled: spread_disabled,
                 on_change: { let plot = plot.clone(); move |show_spread| on_change.call(PlotOptions { show_spread, ..plot.clone() }) },
             }
             Toggle {
-                label: "Range (min–max)", value: plot.show_range, disabled: line_view(&plan) != "inputs",
+                label: "Range (min–max)", value: plot.show_range && !spread_disabled, disabled: spread_disabled,
                 on_change: { let plot = plot.clone(); move |show_range| on_change.call(PlotOptions { show_range, ..plot.clone() }) },
+            }
+            if averaged_metric {
+                p { class: "muted", "Bars are unavailable for metrics calculated from averages. Select a runtime metric to see repeat variability." }
+            } else if plan.normalization.is_some() {
+                p { class: "muted", "Bars are unavailable while comparing to a baseline commit. Turn off the comparison to see repeat variability." }
+            } else if matches!(plan.runs, Some(RunTreatment::Summaries { .. })) {
+                p { class: "muted", "Bars are unavailable for averages across runs. Use measurements from one run to see repeat variability." }
             }
         }
         details { class: "more-options",

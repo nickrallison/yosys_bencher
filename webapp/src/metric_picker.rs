@@ -1,6 +1,6 @@
 use crate::model::label;
 use dioxus::prelude::*;
-use yosys_bench_ui_types::metrics::{MetricSource, MetricSpec};
+use yosys_bencher_ui_types::metrics::{MetricSource, MetricSpec};
 
 #[derive(Clone, Debug, PartialEq)]
 struct Measurement {

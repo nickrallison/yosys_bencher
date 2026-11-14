@@ -54,5 +54,5 @@ struct YosysBenchCallTrace {
         fputs("]}\n", file);
         fclose(file);
     }
-} yosys_bench_call_trace;
+} yosys_bencher_call_trace;
 }

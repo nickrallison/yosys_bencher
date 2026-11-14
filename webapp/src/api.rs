@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
-use yosys_bench_ui_types::{analysis::*, api::*, experiment::*, store::*};
+use yosys_bencher_ui_types::{analysis::*, api::*, experiment::*, store::*};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Metadata {
     pub description: ExperimentDescription,
@@ -22,14 +22,14 @@ pub struct ArtifactData {
 }
 #[cfg(feature = "server")]
 pub(crate) fn backend<T>(
-    f: impl FnOnce(yosys_bench::analysis::Backend) -> yosys_bench::store::Result<T>,
+    f: impl FnOnce(yosys_bencher::analysis::Backend) -> yosys_bencher::store::Result<T>,
 ) -> Result<T, ApiError> {
     let path = std::env::var_os("YOSYS_BENCH_DATABASE")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../output/results.sqlite")
         });
-    yosys_bench::analysis::Backend::open(path)
+    yosys_bencher::analysis::Backend::open(path)
         .and_then(f)
         .map_err(|e| ApiError::from(&e))
 }
@@ -52,7 +52,7 @@ pub async fn metadata(id: ExperimentId) -> Result<Result<Metadata, ApiError>, Se
         let (revisions, revision_order_required, warnings) =
             match b.revisions(id, &RevisionQuery::All) {
                 Ok(revisions) => (revisions, false, vec![]),
-                Err(yosys_bench::store::StoreError::Invalid(reason)) => {
+                Err(yosys_bencher::store::StoreError::Invalid(reason)) => {
                     let mut seen = std::collections::BTreeSet::new();
                     let ids = runs
                         .iter()

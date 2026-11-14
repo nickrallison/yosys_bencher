@@ -1,6 +1,6 @@
 use crate::{api::Metadata, chart::PlotlyChart, model::*};
 use dioxus::prelude::*;
-use yosys_bench_ui_types::{
+use yosys_bencher_ui_types::{
     analysis::*,
     metrics::{FormulaStage, MetricSource, Reduction},
     store::InputId,

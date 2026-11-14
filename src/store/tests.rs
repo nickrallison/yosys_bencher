@@ -539,7 +539,7 @@ fn input_search_paging_and_shared_json_preserve_selection() {
     .unwrap();
     let result = backend.analyze(&plan).unwrap();
     let json = serde_json::to_string(&result).unwrap();
-    let decoded: yosys_bench_ui_types::analysis::AnalysisResponse =
+    let decoded: yosys_bencher_ui_types::analysis::AnalysisResponse =
         serde_json::from_str(&json).unwrap();
     assert_eq!(decoded.inputs[0].id, run.inputs[0]);
 }

@@ -5,7 +5,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
-pub use yosys_bench_ui_types::store::*;
+pub use yosys_bencher_ui_types::store::*;
 pub trait StoredProcedure: Procedure + 'static {
     const DEFAULT_METRIC: Option<&'static str> = None;
     const STORAGE_KEY: &'static str;

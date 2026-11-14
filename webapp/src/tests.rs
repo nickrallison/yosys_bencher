@@ -2,7 +2,7 @@ use super::*;
 use crate::api::Metadata;
 use serde_json::json;
 use std::time::{Duration, SystemTime};
-use yosys_bench::{
+use yosys_bencher::{
     analysis::Backend,
     benchmarks::{
         synth::{TimingConfig, TimingProcedure},
@@ -12,8 +12,8 @@ use yosys_bench::{
     store::{ExperimentSpec, RunPlan, SqliteStore},
     tools::yosys::design::Design,
 };
-use yosys_bench_ui_types::experiment::*;
-use yosys_bench_ui_types::metrics::Reduction;
+use yosys_bencher_ui_types::experiment::*;
+use yosys_bencher_ui_types::metrics::Reduction;
 fn dataset() -> (Backend, Metadata) {
     type P = YosysBenchmark<TimingProcedure>;
     let mut store = SqliteStore::in_memory().unwrap();
@@ -370,6 +370,54 @@ impl TestView {
     fn html(&self) -> String {
         dioxus::ssr::render(&self.dom)
     }
+}
+
+#[test]
+fn unavailable_spread_controls_are_unchecked_without_losing_preferences() {
+    use yosys_bencher_ui_types::metrics::{FormulaKind, FormulaStage, MetricSource};
+    let (backend, mut meta) = dataset();
+    let mut plan = initial(&meta);
+    let result = backend.analyze(&plan).unwrap();
+    let mut ratio = meta.description.metrics[0].clone();
+    ratio.path = "ratio".into();
+    ratio.source = MetricSource::Formula {
+        numerator: "runtime".into(),
+        denominator: "runtime".into(),
+        formula: FormulaKind::Ratio,
+        stage: FormulaStage::Input,
+    };
+    meta.description.metrics.push(ratio);
+    let check = |plan: &AnalysisPlan, unavailable: bool| {
+        let ui = TestView::new(ViewProps {
+            meta: meta.clone(),
+            plan: plan.clone(),
+            result: result.clone(),
+        });
+        let html = ui.html();
+        let sidebar = html.split("</aside>").next().unwrap();
+        for label in ["Standard deviation (±1 SD)", "Range (min–max)"] {
+            let input = sidebar
+                .split("<input")
+                .filter_map(|s| s.split('>').next())
+                .find(|s| s.contains(label))
+                .unwrap();
+            assert_eq!(input.contains("disabled"), unavailable, "{input}");
+            assert_eq!(input.contains("checked"), !unavailable, "{input}");
+        }
+    };
+    check(&plan, false);
+    plan.metric = Some("ratio".into());
+    check(&plan, true);
+    plan.metric = Some("runtime".into());
+    check(&plan, false);
+    plan.normalization = Some(Normalization {
+        revision: "aaaa1111".into(),
+        kind: ChangeKind::Ratio,
+        runs: None,
+    });
+    check(&plan, true);
+    plan.normalization = None;
+    check(&plan, false);
 }
 
 #[test]

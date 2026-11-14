@@ -1,4 +1,4 @@
-# Results workspace
+# yosys_bencher
 
 Storage, typed adapter registration, and the five initial analysis modes are
 implemented, together with a V1-style Dioxus UI. See [UI usage](docs/ui.md) for
