@@ -216,6 +216,7 @@ impl SqliteStore {
         record: &AttemptRecord<P::Output>,
         directory: Option<&Path>,
     ) -> Result<()> {
+        let artifact_base = self.artifact_base().map(Path::to_path_buf);
         let tx = self.connection.transaction()?;
         let (contract,state,work_state,run_state,experiment,measurement):(String,String,String,String,i64,bool)=tx.query_row("SELECT e.contract,a.state,w.state,r.state,e.id,coalesce(json_extract(r.plan,'$.purpose'),'measurement')='measurement' FROM attempts a JOIN work_items w ON w.id=a.work_item JOIN runs r ON r.id=w.run JOIN experiments e ON e.id=r.experiment WHERE a.id=?",[attempt.0],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)))?;
         if decode::<Contract>(&contract)? != contract_for::<P>() {
@@ -272,9 +273,10 @@ impl SqliteStore {
             }
             artifacts.sort();
             for (name, path) in artifacts {
+                let path = super::paths::stored(Path::new(&path), artifact_base.as_deref())?;
                 tx.execute(
                     "INSERT INTO artifacts(attempt,name,path) VALUES(?,?,?)",
-                    params![attempt.0, name, path],
+                    params![attempt.0, name, path.to_string_lossy()],
                 )?;
             }
         }

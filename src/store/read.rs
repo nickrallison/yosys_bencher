@@ -687,7 +687,7 @@ impl SqliteStore {
             .prepare("SELECT id,name,path FROM artifacts WHERE attempt=? ORDER BY id")?;
         Ok(stmt
             .query_map([attempt.0], |r| {
-                let path = PathBuf::from(r.get::<_, String>(2)?);
+                let path = self.artifact_path(r.get::<_, String>(2)?);
                 Ok(Artifact {
                     id: ArtifactId(r.get(0)?),
                     attempt,
@@ -703,7 +703,7 @@ impl SqliteStore {
                 "SELECT attempt,name,path FROM artifacts WHERE id=?",
                 [id.0],
                 |r| {
-                    let path = PathBuf::from(r.get::<_, String>(2)?);
+                    let path = self.artifact_path(r.get::<_, String>(2)?);
                     Ok(Artifact {
                         id,
                         attempt: AttemptId(r.get(0)?),
@@ -724,6 +724,6 @@ impl SqliteStore {
             })
             .optional()?
             .ok_or_else(|| StoreError::NotFound(format!("artifact {id}")))?;
-        Ok(std::fs::read(path)?)
+        Ok(std::fs::read(self.artifact_path(path))?)
     }
 }

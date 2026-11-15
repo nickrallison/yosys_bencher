@@ -1,4 +1,5 @@
 mod error;
+mod paths;
 mod projection;
 mod read;
 mod types;
@@ -40,46 +41,37 @@ impl SqliteStore {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)?;
         }
-        let mut store = Self::from_connection(Connection::open(path)?)?;
-        if let Some(path) = store.connection.path().filter(|path| !path.is_empty()) {
-            store.database = DatabaseId::File(std::fs::canonicalize(path)?);
-        }
-        Ok(store)
+        Self::from_connection(Connection::open(path)?)
     }
     pub fn in_memory() -> Result<Self> {
         Self::from_connection(Connection::open_in_memory()?)
     }
     fn from_connection(connection: Connection) -> Result<Self> {
+        static NEXT_MEMORY_DATABASE: AtomicU64 = AtomicU64::new(0);
+        let database = match connection.path().filter(|path| !path.is_empty()) {
+            Some(path) => DatabaseId::File(std::fs::canonicalize(path)?),
+            None => DatabaseId::Memory(NEXT_MEMORY_DATABASE.fetch_add(1, Ordering::Relaxed)),
+        };
         connection.busy_timeout(Duration::from_secs(5))?;
-        let version: u32 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 2 {
-            return Err(StoreError::Unsupported(format!(
-                "database schema {version}"
-            )));
-        }
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "foreign_keys", true)?;
-        // Reapplying user_version rewrites the header even when its value is unchanged.
-        // Reads must not change the file revision used to validate shared caches.
-        if version < 2 {
-            let tx = rusqlite::Transaction::new_unchecked(
-                &connection,
-                rusqlite::TransactionBehavior::Immediate,
-            )?;
-            let current: u32 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
-            if current == 0 {
-                tx.execute_batch(include_str!("schema.sql"))?;
-            }
-            if current < 2 {
-                tx.execute_batch(include_str!("schema_v2.sql"))?;
-            }
-            tx.commit()?;
-        }
-        static NEXT_MEMORY_DATABASE: AtomicU64 = AtomicU64::new(0);
+        connection.execute_batch(include_str!("schema.sql"))?;
         Ok(Self {
             connection,
-            database: DatabaseId::Memory(NEXT_MEMORY_DATABASE.fetch_add(1, Ordering::Relaxed)),
+            database,
         })
+    }
+    fn artifact_base(&self) -> Option<&Path> {
+        match &self.database {
+            DatabaseId::File(path) => path.parent(),
+            DatabaseId::Memory(_) => None,
+        }
+    }
+    fn artifact_path(&self, path: impl AsRef<Path>) -> PathBuf {
+        match self.artifact_base() {
+            Some(base) => base.join(path),
+            None => path.as_ref().to_path_buf(),
+        }
     }
     pub fn generation(&self) -> Result<i64> {
         Ok(self

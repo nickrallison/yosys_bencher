@@ -4,7 +4,7 @@ pub enum StoreError {
     Validation { field: String, message: String },
     #[error("{0}")]
     Invalid(String),
-    #[error("unsupported stored procedure or schema: {0}")]
+    #[error("unsupported stored procedure: {0}")]
     Unsupported(String),
     #[error("not found: {0}")]
     NotFound(String),

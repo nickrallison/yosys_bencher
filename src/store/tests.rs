@@ -3,6 +3,7 @@ use crate::{analysis::*, experiment::*, metrics::*};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 
+mod artifacts;
 mod cache;
 mod projection;
 mod spread;

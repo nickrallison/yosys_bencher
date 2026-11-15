@@ -209,7 +209,7 @@ fn projected_analysis_matches_legacy_for_operations_formulas_and_reducers() {
 }
 
 #[test]
-fn version_one_database_backfills_once_and_preserves_raw_records() {
+fn reopening_database_preserves_records_and_analysis() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("results.sqlite");
     let mut store = SqliteStore::open(&path).unwrap();
@@ -223,7 +223,6 @@ fn version_one_database_backfills_once_and_preserves_raw_records() {
         .collect::<std::result::Result<_, _>>()
         .unwrap();
     let generation = store.generation().unwrap();
-    store.connection.execute_batch("DROP TABLE analysis_values; DROP TABLE analysis_records; DROP TABLE analysis_metrics; DROP TABLE analysis_inputs; DROP TABLE analysis_state; PRAGMA user_version=1;").unwrap();
     drop(store);
     let backend = Backend::open(&path).unwrap();
     let plan = AnalysisPlan::history(ResultSelection::new(run.experiment), "a");
@@ -239,14 +238,6 @@ fn version_one_database_backfills_once_and_preserves_raw_records() {
         .collect::<std::result::Result<_, _>>()
         .unwrap();
     assert_eq!(raw, after);
-    assert_eq!(
-        backend
-            .store
-            .connection
-            .pragma_query_value::<i64, _>(None, "user_version", |r| r.get(0))
-            .unwrap(),
-        2
-    );
     assert_eq!(
         backend
             .store
